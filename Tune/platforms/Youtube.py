@@ -6,7 +6,7 @@ import re
 from typing import Union
 import yt_dlp
 from py_yt import VideosSearch
-from ShrutiMusic.utils.formatters import time_to_seconds
+from Tune.utils.formatters import time_to_seconds
 import aiohttp
 from pyrogram.types import Message
 from pyrogram.enums import MessageEntityType
