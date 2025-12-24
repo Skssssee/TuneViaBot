@@ -1,71 +1,75 @@
+
 import asyncio
 import os
 import re
 from typing import Union
 import yt_dlp
 from py_yt import VideosSearch
-from Tune.utils.formatters import time_to_seconds
+from ShrutiMusic.utils.formatters import time_to_seconds
 import aiohttp
 from pyrogram.types import Message
 from pyrogram.enums import MessageEntityType
-# from ShrutiMusic import LOGGER
 
 # --- CONFIGURATION ---
-MY_API_URL = "https://disabled-rosalinde-uhhy5-523ef0f0.koyeb.app/" 
+# ✅ REPLACE THIS WITH YOUR NEW KOYEB URL
+MY_API_URL = "https://disabled-rosalinde-uhhy5-523ef0f0.koyeb.app" 
 # ---------------------
 
-async def download_song(link: str) -> str:
-    video_id = link.split('v=')[-1].split('&')[0] if 'v=' in link else link
+async def get_video_id(link: str) -> str:
+    """Helper to safely extract video ID from any YouTube link."""
+    if "youtu.be" in link:
+        return link.split("/")[-1].split("?")[0]
+    elif "v=" in link:
+        return link.split("v=")[-1].split("&")[0]
+    else:
+        # If it's already just an ID or unknown format, return as is
+        return link
 
-    if not video_id or len(video_id) < 3:
+async def download_song(link: str) -> str:
+    video_id = await get_video_id(link)
+    
+    if not video_id:
         return None
 
     DOWNLOAD_DIR = "downloads"
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
     file_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp3")
 
+    # Check if already downloaded
     if os.path.exists(file_path):
         return file_path
 
+    # Use the API
     api_url = MY_API_URL
-    
     try:
         async with aiohttp.ClientSession() as session:
-            stream_url = f"{api_url}/audio?url=https://www.youtube.com/watch?v={video_id}"
-            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
-            print(f"[DEBUG-ANTIGRAVITY] Downloading: {stream_url}")
+            # Construct the full YouTube URL for the API
+            full_yt_url = f"https://www.youtube.com/watch?v={video_id}"
+            stream_url = f"{api_url}/audio?url={full_yt_url}"
+            
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
             
             async with session.get(stream_url, headers=headers) as response:
-                print(f"[DEBUG-ANTIGRAVITY] Status Code: {response.status}")
-                
                 if response.status == 200:
                     with open(file_path, "wb") as f:
                         async for chunk in response.content.iter_chunked(16384):
                             f.write(chunk)
                     
                     if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
-                        print(f"[DEBUG-ANTIGRAVITY] Success! Saved to {file_path}")
                         return file_path
-                    else:
-                        print("[DEBUG-ANTIGRAVITY] Downloaded file is empty.")
                 else:
-                    text = await response.text()
-                    print(f"[DEBUG-ANTIGRAVITY] Failed. Body: {text}")
-
+                    print(f"❌ API Error: {response.status}")
     except Exception as e:
-        print(f"[DEBUG-ANTIGRAVITY] Exception: {e}")
+        print(f"❌ Download Exception: {e}")
         if os.path.exists(file_path):
-            try:
-                os.remove(file_path)
-            except:
-                pass
+            os.remove(file_path)
     
     return None
 
 async def download_video(link: str) -> str:
-    video_id = link.split('v=')[-1].split('&')[0] if 'v=' in link else link
+    video_id = await get_video_id(link)
 
-    if not video_id or len(video_id) < 3:
+    if not video_id:
         return None
 
     DOWNLOAD_DIR = "downloads"
@@ -76,15 +80,14 @@ async def download_video(link: str) -> str:
         return file_path
 
     api_url = MY_API_URL
-    
     try:
         async with aiohttp.ClientSession() as session:
-            stream_url = f"{api_url}/download?url=https://www.youtube.com/watch?v={video_id}"
-            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
-            print(f"[DEBUG-ANTIGRAVITY] Downloading Video: {stream_url}")
+            full_yt_url = f"https://www.youtube.com/watch?v={video_id}"
+            stream_url = f"{api_url}/download?url={full_yt_url}"
+            
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
             
             async with session.get(stream_url, headers=headers) as response:
-                print(f"[DEBUG-ANTIGRAVITY] Status: {response.status}")
                 if response.status == 200:
                     with open(file_path, "wb") as f:
                         async for chunk in response.content.iter_chunked(16384):
@@ -93,12 +96,9 @@ async def download_video(link: str) -> str:
                     if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
                         return file_path
     except Exception as e:
-        print(f"[DEBUG-ANTIGRAVITY] Video Error: {e}")
+        print(f"❌ Video Download Error: {e}")
         if os.path.exists(file_path):
-            try:
-                os.remove(file_path)
-            except:
-                pass
+            os.remove(file_path)
     
     return None
 
