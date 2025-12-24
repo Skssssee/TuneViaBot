@@ -5,7 +5,7 @@ from typing import Union
 from pyrogram.types import Message
 from pyrogram.enums import MessageEntityType
 from py_yt import VideosSearch
-from ShrutiMusic.utils.formatters import time_to_seconds
+from Tune.utils.formatters import time_to_seconds
 
 # ─────────────────────────────
 # CONFIG
