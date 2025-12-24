@@ -1,3 +1,4 @@
+
 import os
 import re
 import aiohttp
@@ -5,13 +6,13 @@ from typing import Union
 from pyrogram.types import Message
 from pyrogram.enums import MessageEntityType
 from py_yt import VideosSearch
-from Tune.utils.formatters import time_to_seconds
+from Tune.utils.formatters import time_to_seconds   # ⚠️ TuneViaBot path
 
 # ─────────────────────────────
 # CONFIG
 # ─────────────────────────────
 
-MY_API_URL = "https://disabled-rosalinde-uhhy5-523ef0f0.koyeb.app/"
+MY_API_URL = "https://disabled-rosalinde-uhhy5-523ef0f0.koyeb.app"
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
@@ -22,7 +23,7 @@ UA = (
 )
 
 # ─────────────────────────────
-# INTERNAL DOWNLOADERS (API BASED)
+# INTERNAL API DOWNLOAD
 # ─────────────────────────────
 
 async def _download_from_api(video_id: str, mode: str):
@@ -41,7 +42,7 @@ async def _download_from_api(video_id: str, mode: str):
 
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers, timeout=90) as resp:
+            async with session.get(url, headers=headers, timeout=120) as resp:
                 ct = resp.headers.get("Content-Type", "").lower()
 
                 if resp.status != 200:
@@ -72,8 +73,15 @@ async def _download_from_api(video_id: str, mode: str):
     return None
 
 # ─────────────────────────────
-# PUBLIC FUNCTIONS
+# HELPERS
 # ─────────────────────────────
+
+def extract_video_id(link: str):
+    if "v=" in link:
+        return link.split("v=")[-1].split("&")[0]
+    if "youtu.be/" in link:
+        return link.split("youtu.be/")[-1].split("?")[0]
+    return None
 
 async def download_song(link: str):
     vid = extract_video_id(link)
@@ -87,15 +95,8 @@ async def download_video(link: str):
         return None
     return await _download_from_api(vid, "download")
 
-def extract_video_id(link: str):
-    if "v=" in link:
-        return link.split("v=")[-1].split("&")[0]
-    if "youtu.be/" in link:
-        return link.split("youtu.be/")[-1].split("?")[0]
-    return None
-
 # ─────────────────────────────
-# YOUTUBE API CLASS (ShrutiMusic)
+# YOUTUBE API CLASS
 # ─────────────────────────────
 
 class YouTubeAPI:
@@ -129,7 +130,6 @@ class YouTubeAPI:
     async def details(self, link: str, videoid: Union[bool, str] = None):
         if videoid:
             link = self.base + link
-
         if "&" in link:
             link = link.split("&")[0]
 
@@ -143,6 +143,25 @@ class YouTubeAPI:
         vidid = data["id"]
 
         return title, duration_min, duration_sec, thumbnail, vidid
+
+    async def track(self, link: str, videoid: Union[bool, str] = None):
+        if videoid:
+            link = self.base + link
+        if "&" in link:
+            link = link.split("&")[0]
+
+        r = VideosSearch(link, limit=1)
+        data = (await r.next())["result"][0]
+
+        track_details = {
+            "title": data["title"],
+            "link": data["link"],
+            "vidid": data["id"],
+            "duration_min": data["duration"],
+            "thumb": data["thumbnails"][0]["url"].split("?")[0],
+        }
+
+        return track_details, data["id"]
 
     async def download(
         self,
