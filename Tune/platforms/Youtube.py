@@ -1,83 +1,61 @@
 
+
 import asyncio
 import os
 import re
 from typing import Union
 import yt_dlp
 from py_yt import VideosSearch
-from Tune.utils.formatters import time_to_seconds
+from ShrutiMusic.utils.formatters import time_to_seconds
 import aiohttp
 from pyrogram.types import Message
 from pyrogram.enums import MessageEntityType
+# from ShrutiMusic import LOGGER
 
 # --- CONFIGURATION ---
-# This is your working API URL
-MY_API_URL = "https://disabled-rosalinde-uhhy5-523ef0f0.koyeb.app" 
+MY_API_URL = "https://civic-robby-uhhy5-a19ca05d.koyeb.app" 
 # ---------------------
 
-async def get_video_id(link: str) -> str:
-    """Safely extract video ID from various YouTube link formats."""
-    if "youtu.be" in link:
-        return link.split("/")[-1].split("?")[0]
-    elif "v=" in link:
-        return link.split("v=")[-1].split("&")[0]
-    return link
-
 async def download_song(link: str) -> str:
-    video_id = await get_video_id(link)
-    
-    if not video_id:
+    video_id = link.split('v=')[-1].split('&')[0] if 'v=' in link else link
+
+    if not video_id or len(video_id) < 3:
         return None
 
     DOWNLOAD_DIR = "downloads"
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
     file_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp3")
 
-    # 1. Check Cache: If file exists and is big enough (>100KB), use it
-    if os.path.exists(file_path) and os.path.getsize(file_path) > 102400:
-        return file_path
-    
-    # If file exists but is small/empty (corrupt), delete it
     if os.path.exists(file_path):
-        try:
-            os.remove(file_path)
-        except:
-            pass
+        return file_path
 
-    # 2. Download from API
     api_url = MY_API_URL
+    
     try:
         async with aiohttp.ClientSession() as session:
-            full_yt_url = f"https://www.youtube.com/watch?v={video_id}"
-            stream_url = f"{api_url}/audio?url={full_yt_url}"
-            
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            }
+            stream_url = f"{api_url}/audio?url=https://www.youtube.com/watch?v={video_id}"
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
+            print(f"[DEBUG-ANTIGRAVITY] Downloading: {stream_url}")
             
             async with session.get(stream_url, headers=headers) as response:
-                print(f"📥 API Download Status for {video_id}: {response.status}")
+                print(f"[DEBUG-ANTIGRAVITY] Status Code: {response.status}")
                 
                 if response.status == 200:
-                    total_written = 0
                     with open(file_path, "wb") as f:
                         async for chunk in response.content.iter_chunked(16384):
                             f.write(chunk)
-                            total_written += len(chunk)
                     
-                    # 3. VERIFICATION: Is the file actually a song?
-                    # If file is < 50KB, it's likely an error message saved as .mp3
-                    if total_written < 51200:
-                        print(f"❌ Error: File too small ({total_written} bytes). Deleting...")
-                        os.remove(file_path)
-                        return None
-                        
-                    return file_path
+                    if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+                        print(f"[DEBUG-ANTIGRAVITY] Success! Saved to {file_path}")
+                        return file_path
+                    else:
+                        print("[DEBUG-ANTIGRAVITY] Downloaded file is empty.")
                 else:
-                    print(f"❌ API Failed: {response.status}")
-                    
+                    text = await response.text()
+                    print(f"[DEBUG-ANTIGRAVITY] Failed. Body: {text}")
+
     except Exception as e:
-        print(f"❌ Download Exception: {e}")
+        print(f"[DEBUG-ANTIGRAVITY] Exception: {e}")
         if os.path.exists(file_path):
             try:
                 os.remove(file_path)
@@ -87,45 +65,42 @@ async def download_song(link: str) -> str:
     return None
 
 async def download_video(link: str) -> str:
-    video_id = await get_video_id(link)
+    video_id = link.split('v=')[-1].split('&')[0] if 'v=' in link else link
 
-    if not video_id:
+    if not video_id or len(video_id) < 3:
         return None
 
     DOWNLOAD_DIR = "downloads"
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
     file_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp4")
 
-    if os.path.exists(file_path) and os.path.getsize(file_path) > 102400:
-        return file_path
-    
     if os.path.exists(file_path):
-        os.remove(file_path)
+        return file_path
 
     api_url = MY_API_URL
+    
     try:
         async with aiohttp.ClientSession() as session:
-            full_yt_url = f"https://www.youtube.com/watch?v={video_id}"
-            stream_url = f"{api_url}/download?url={full_yt_url}"
-            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+            stream_url = f"{api_url}/download?url=https://www.youtube.com/watch?v={video_id}"
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
+            print(f"[DEBUG-ANTIGRAVITY] Downloading Video: {stream_url}")
             
             async with session.get(stream_url, headers=headers) as response:
+                print(f"[DEBUG-ANTIGRAVITY] Status: {response.status}")
                 if response.status == 200:
-                    total_written = 0
                     with open(file_path, "wb") as f:
                         async for chunk in response.content.iter_chunked(16384):
                             f.write(chunk)
-                            total_written += len(chunk)
                     
-                    if total_written < 51200:
-                        os.remove(file_path)
-                        return None
-                        
-                    return file_path
+                    if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+                        return file_path
     except Exception as e:
-        print(f"❌ Video Exception: {e}")
+        print(f"[DEBUG-ANTIGRAVITY] Video Error: {e}")
         if os.path.exists(file_path):
-            os.remove(file_path)
+            try:
+                os.remove(file_path)
+            except:
+                pass
     
     return None
 
@@ -286,3 +261,4 @@ class YouTubeAPI:
                 return None, False
         except Exception:
             return None, False
+
