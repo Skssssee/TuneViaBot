@@ -28,3 +28,4 @@ git+https://github.com/CertifiedCoders/youtube-search-python
 py-yt-search
 youtube-search
 git+https://github.com/AshokShau/py-yt-search.git
+pyrogram
