@@ -34,7 +34,7 @@ async def stream(
 ):
 
     if not result:
-        raise AssistantErr(_["play_14"])
+        return
 
     is_video = bool(video)
     forceplay = bool(forceplay)
@@ -42,83 +42,158 @@ async def stream(
     if forceplay:
         await StreamController.force_stop_stream(chat_id)
 
+    # ===================== PLAYLIST =====================
+    if streamtype == "playlist":
+        msg = f"{_['play_19']}\n\n"
+        count = 0
+
+        for search in result:
+            if count >= config.PLAYLIST_FETCH_LIMIT:
+                break
+            try:
+                title, duration_min, duration_sec, thumb, vidid = await YouTube.details(search, True)
+            except:
+                continue
+
+            if not duration_min or duration_sec > config.DURATION_LIMIT:
+                continue
+
+            if await is_active_chat(chat_id):
+                await put_queue(
+                    chat_id,
+                    original_chat_id,
+                    f"vid_{vidid}",
+                    title,
+                    duration_min,
+                    user_name,
+                    vidid,
+                    user_id,
+                    "audio",
+                )
+                pos = len(db.get(chat_id)) - 1
+                count += 1
+                msg += f"{count}. {title[:60]}\n{_['play_20']} {pos}\n\n"
+
+            else:
+                db[chat_id] = []
+
+                # 🔥 API AUDIO STREAM
+                try:
+                    api_data = await YouTube.api_request(vidid)
+                    audio_url = api_data["audio_url"]
+                except:
+                    raise AssistantErr(_["play_14"])
+
+                await StreamController.join_call(
+                    chat_id,
+                    original_chat_id,
+                    audio_url,
+                    video=False,
+                )
+
+                await put_queue(
+                    chat_id,
+                    original_chat_id,
+                    audio_url,
+                    title,
+                    duration_min,
+                    user_name,
+                    vidid,
+                    user_id,
+                    "audio",
+                )
+
+                img = await get_thumb(vidid)
+                btn = stream_markup(_, chat_id)
+                sent = await app.send_photo(
+                    original_chat_id,
+                    photo=img,
+                    caption=_["stream_1"].format(
+                        f"https://t.me/{app.username}?start=info_{vidid}",
+                        title[:23],
+                        duration_min,
+                        user_name,
+                    ),
+                    reply_markup=InlineKeyboardMarkup(btn),
+                )
+                db[chat_id][0]["mystic"] = sent
+                db[chat_id][0]["markup"] = "stream"
+                count += 1
+
+        if count == 0:
+            return
+
+        link = await TuneBin(msg)
+        carbon = await Carbon.generate(msg[:1200], randint(100, 999999))
+        return await app.send_photo(
+            original_chat_id,
+            photo=carbon,
+            caption=_["play_21"].format(count - 1, link),
+            reply_markup=close_markup(_),
+        )
+
     # ===================== YOUTUBE =====================
-    if streamtype == "youtube":
+    elif streamtype == "youtube":
+        vidid = result["vidid"]
+        title = result["title"].title()
+        duration_min = result["duration_min"]
+        thumbnail = result["thumb"]
 
-        # 🔹 SAFE METADATA (never fail)
-        vidid = result.get("vidid") or result.get("id")
-        if not vidid:
-            raise AssistantErr(_["play_14"])
-
-        title = (result.get("title") or "Unknown Track").title()
-        duration_min = result.get("duration_min") or "00:00"
-        thumbnail = result.get("thumb")
-
-        # 🔥 CORE FIX: ALWAYS TRY DOWNLOAD
+        # 🔥 API AUDIO STREAM ONLY
         try:
-            file_path, direct = await YouTube.download(
-                vidid,
-                mystic,
-                video=is_video,
-                videoid=True
-            )
+            api_data = await YouTube.api_request(vidid)
+            audio_url = api_data["audio_url"]
         except Exception as e:
-            print("YT DOWNLOAD ERROR:", e)
+            print("API ERROR:", e)
             raise AssistantErr(_["play_14"])
 
-        if not file_path:
+        if not audio_url:
             raise AssistantErr(_["play_14"])
 
-        # ================= QUEUE HANDLING =================
         if await is_active_chat(chat_id):
             await put_queue(
                 chat_id,
                 original_chat_id,
-                file_path if direct else f"vid_{vidid}",
+                audio_url,
                 title,
                 duration_min,
                 user_name,
                 vidid,
                 user_id,
-                "video" if is_video else "audio",
+                "audio",
             )
-            position = len(db.get(chat_id)) - 1
-            button = aq_markup(_, chat_id)
+            pos = len(db.get(chat_id)) - 1
             return await app.send_message(
                 original_chat_id,
-                _["queue_4"].format(position, title[:27], duration_min, user_name),
-                reply_markup=InlineKeyboardMarkup(button),
+                _["queue_4"].format(pos, title[:27], duration_min, user_name),
+                reply_markup=InlineKeyboardMarkup(aq_markup(_, chat_id)),
             )
 
-        # ================= FIRST PLAY =====================
-        if not forceplay:
-            db[chat_id] = []
+        db[chat_id] = []
 
         await StreamController.join_call(
             chat_id,
             original_chat_id,
-            file_path,
-            video=is_video,
-            image=thumbnail,
+            audio_url,
+            video=False,
         )
 
         await put_queue(
             chat_id,
             original_chat_id,
-            file_path if direct else f"vid_{vidid}",
+            audio_url,
             title,
             duration_min,
             user_name,
             vidid,
             user_id,
-            "video" if is_video else "audio",
+            "audio",
             forceplay=forceplay,
         )
 
         img = await get_thumb(vidid)
-        button = stream_markup(_, chat_id)
-
-        run = await app.send_photo(
+        btn = stream_markup(_, chat_id)
+        sent = await app.send_photo(
             original_chat_id,
             photo=img,
             caption=_["stream_1"].format(
@@ -127,72 +202,54 @@ async def stream(
                 duration_min,
                 user_name,
             ),
-            reply_markup=InlineKeyboardMarkup(button),
+            reply_markup=InlineKeyboardMarkup(btn),
         )
-
-        db[chat_id][0]["mystic"] = run
+        db[chat_id][0]["mystic"] = sent
         db[chat_id][0]["markup"] = "stream"
-        return
 
-    # ================= INDEX / M3U8 =====================
+    # ===================== INDEX / M3U8 =====================
     elif streamtype == "index":
-
         link = result
-        title = "ɪɴᴅᴇx / ᴍ3ᴜ8 ꜱᴛʀᴇᴀᴍ"
+        title = "Stream"
         duration_min = "00:00"
 
         if await is_active_chat(chat_id):
             await put_queue_index(
                 chat_id,
                 original_chat_id,
-                "index_url",
+                "index",
                 title,
                 duration_min,
                 user_name,
                 link,
-                "video" if is_video else "audio",
+                "audio",
             )
-            position = len(db.get(chat_id)) - 1
-            button = aq_markup(_, chat_id)
+            pos = len(db.get(chat_id)) - 1
             return await mystic.edit_text(
-                _["queue_4"].format(position, title[:27], duration_min, user_name),
-                reply_markup=InlineKeyboardMarkup(button),
+                _["queue_4"].format(pos, title, duration_min, user_name),
+                reply_markup=InlineKeyboardMarkup(aq_markup(_, chat_id)),
             )
 
-        if not forceplay:
-            db[chat_id] = []
-
-        await StreamController.join_call(
-            chat_id,
-            original_chat_id,
-            link,
-            video=is_video,
-        )
-
+        db[chat_id] = []
+        await StreamController.join_call(chat_id, original_chat_id, link, video=False)
         await put_queue_index(
             chat_id,
             original_chat_id,
-            "index_url",
+            "index",
             title,
             duration_min,
             user_name,
             link,
-            "video" if is_video else "audio",
+            "audio",
             forceplay=forceplay,
         )
 
-        button = stream_markup(_, chat_id)
-        run = await app.send_photo(
+        sent = await app.send_photo(
             original_chat_id,
             photo=config.STREAM_IMG_URL,
             caption=_["stream_2"].format(user_name),
-            reply_markup=InlineKeyboardMarkup(button),
+            reply_markup=InlineKeyboardMarkup(stream_markup(_, chat_id)),
         )
-
-        db[chat_id][0]["mystic"] = run
+        db[chat_id][0]["mystic"] = sent
         db[chat_id][0]["markup"] = "tg"
-        return
-
-    # ================= FALLBACK =====================
-    else:
-        raise AssistantErr(_["play_14"])
+        await mystic.delete()
