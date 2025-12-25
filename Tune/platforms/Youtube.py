@@ -14,8 +14,7 @@ class YouTubeAPI:
     def __init__(self):
         self.base = "https://www.youtube.com/watch?v="
         self.regex = r"(?:youtube\.com|youtu\.be)"
-        # yt-api service running on same VPS
-        self.api_base = "http://152.42.187.207:8000"
+        self.api_base = "http://152.42.187.207:8000"  # yt-api running here
 
     # --------------------------------------------------
     # BASIC CHECK
@@ -24,6 +23,35 @@ class YouTubeAPI:
         if videoid:
             link = self.base + link
         return bool(re.search(self.regex, link))
+
+    # --------------------------------------------------
+    # USED BY /play DECORATOR  ✅ FIXES url ERROR
+    # --------------------------------------------------
+    async def url(self, message):
+        """
+        Extract YouTube URL or video ID from /play command
+        """
+        text = message.text or message.caption
+        if not text:
+            return None
+
+        parts = text.split(maxsplit=1)
+        if len(parts) < 2:
+            return None
+
+        query = parts[1].strip()
+
+        # full youtube link
+        if re.search(self.regex, query):
+            if "&" in query:
+                query = query.split("&")[0]
+            return query
+
+        # direct video id
+        if len(query) == 11:
+            return f"https://youtu.be/{query}"
+
+        return None
 
     # --------------------------------------------------
     # SEARCH / DETAILS
@@ -38,7 +66,7 @@ class YouTubeAPI:
         results = VideosSearch(link, limit=1)
         data = await results.next()
 
-        if not data or not data.get("result"):
+        if not data["result"]:
             raise Exception("No results found")
 
         r = data["result"][0]
@@ -62,7 +90,7 @@ class YouTubeAPI:
         results = VideosSearch(link, limit=1)
         data = await results.next()
 
-        if not data or not data.get("result"):
+        if not data["result"]:
             raise Exception("Track not found")
 
         r = data["result"][0]
@@ -78,14 +106,11 @@ class YouTubeAPI:
         return track, r["id"]
 
     # --------------------------------------------------
-    # 🔥 MAIN API STREAM (NO DOWNLOAD, NO STORAGE)
+    # 🔥 MAIN API CALL (yt-api → audio_url)
     # --------------------------------------------------
     async def api_request(self, vidid: str):
-        """
-        Calls yt-api and returns audio stream URL
-        """
         api_url = f"{self.api_base}/audio?url=https://youtu.be/{vidid}"
-        timeout = aiohttp.ClientTimeout(total=15)
+        timeout = aiohttp.ClientTimeout(total=20)
 
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.get(api_url) as resp:
@@ -95,12 +120,12 @@ class YouTubeAPI:
                 data = await resp.json()
 
                 if not data or "audio_url" not in data:
-                    raise Exception("audio_url missing in API response")
+                    raise Exception("audio_url missing")
 
                 return data
 
     # --------------------------------------------------
-    # USED BY stream.py
+    # USED BY stream.py (NO DOWNLOAD)
     # --------------------------------------------------
     async def download(
         self,
@@ -114,10 +139,8 @@ class YouTubeAPI:
         title: Union[bool, str] = None,
     ):
         """
-        IMPORTANT:
-        - No yt-dlp
-        - No file download
-        - Returns direct streaming URL
+        We DO NOT download.
+        We return direct streaming URL from yt-api.
         """
 
         vidid = link if videoid else link.split("v=")[-1]
@@ -128,12 +151,9 @@ class YouTubeAPI:
         return api_data["audio_url"], True
 
     # --------------------------------------------------
-    # LIVE VIDEO (SAFE)
+    # LIVE STREAM (SAFE)
     # --------------------------------------------------
     async def video(self, link: str):
-        """
-        Used only for live streams
-        """
         vidid = link.split("v=")[-1]
         api_data = await self.api_request(vidid)
         return 1, api_data["audio_url"]
