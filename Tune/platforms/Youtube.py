@@ -1,4 +1,5 @@
 import re
+import aiohttp
 from typing import Union
 
 from pyrogram.types import Message
@@ -12,7 +13,7 @@ except ImportError:
 from Tune.utils.formatters import time_to_seconds
 
 # ================= CONFIG =================
-MY_API_URL = "http://127.0.0.1:8000"   # apna yt-api URL yahan
+MY_API_URL = "http://127.0.0.1:8000"   # apna yt-api yahan
 # ========================================
 
 
@@ -22,20 +23,18 @@ class YouTubeAPI:
         self.regex = r"(?:youtube\.com|youtu\.be)"
 
     # -------------------------------------------------
-    # BASIC CHECK
     async def exists(self, link: str, videoid: Union[bool, str] = None):
         if videoid:
             link = self.base + link
         return bool(re.search(self.regex, link))
 
     # -------------------------------------------------
-    # URL EXTRACT FROM MESSAGE
     async def url(self, message: Message) -> Union[str, None]:
-        messages = [message]
+        msgs = [message]
         if message.reply_to_message:
-            messages.append(message.reply_to_message)
+            msgs.append(message.reply_to_message)
 
-        for msg in messages:
+        for msg in msgs:
             if msg.entities:
                 for ent in msg.entities:
                     if ent.type == MessageEntityType.URL:
@@ -49,49 +48,44 @@ class YouTubeAPI:
         return None
 
     # -------------------------------------------------
-    # VIDEO DETAILS
     async def details(self, link: str, videoid: Union[bool, str] = None):
         if videoid:
             link = self.base + link
-
         if "&" in link:
             link = link.split("&")[0]
 
-        search = VideosSearch(link, limit=1)
-        result = (await search.next())["result"][0]
+        s = VideosSearch(link, limit=1)
+        r = (await s.next())["result"][0]
 
-        title = result["title"]
-        duration_min = result["duration"]
+        title = r["title"]
+        duration_min = r["duration"]
         duration_sec = int(time_to_seconds(duration_min)) if duration_min else 0
-        thumb = result["thumbnails"][0]["url"].split("?")[0]
-        vidid = result["id"]
+        thumb = r["thumbnails"][0]["url"].split("?")[0]
+        vidid = r["id"]
 
         return title, duration_min, duration_sec, thumb, vidid
 
     # -------------------------------------------------
-    # TRACK (Tune expects this)
     async def track(self, link: str, videoid: Union[bool, str] = None):
         if videoid:
             link = self.base + link
-
         if "&" in link:
             link = link.split("&")[0]
 
-        search = VideosSearch(link, limit=1)
-        result = (await search.next())["result"][0]
+        s = VideosSearch(link, limit=1)
+        r = (await s.next())["result"][0]
 
         track_details = {
-            "title": result["title"],
-            "link": result["link"],
-            "vidid": result["id"],
-            "duration_min": result["duration"],
-            "thumb": result["thumbnails"][0]["url"].split("?")[0],
+            "title": r["title"],
+            "link": r["link"],
+            "vidid": r["id"],
+            "duration_min": r["duration"],
+            "thumb": r["thumbnails"][0]["url"].split("?")[0],
         }
 
-        return track_details, result["id"]
+        return track_details, r["id"]
 
     # -------------------------------------------------
-    # DOWNLOAD (CRITICAL FOR Tune STREAM ENGINE)
     async def download(
         self,
         link: str,
@@ -104,29 +98,43 @@ class YouTubeAPI:
         title: Union[bool, str] = None,
     ):
         """
-        Tune expects:
-        return (path_or_url, direct_bool)
-
-        direct=True  => stream URL
-        direct=False => local file (we DON'T use this)
+        Tune stream engine compatibility
+        Returns: (stream_url, direct=True)
         """
 
         if videoid:
             link = self.base + link
 
-        vid = link.split("v=")[-1].split("&")[0] if "v=" in link else link
+        if "&" in link:
+            link = link.split("&")[0]
 
-        # ---------- AUDIO (default) ----------
-        if not video:
-            stream_url = (
-                f"{MY_API_URL}/audio?"
-                f"url=https://www.youtube.com/watch?v={vid}"
-            )
-            return stream_url, True
+        vid = link.split("v=")[-1] if "v=" in link else link
 
-        # ---------- VIDEO ----------
-        stream_url = (
-            f"{MY_API_URL}/video?"
-            f"url=https://www.youtube.com/watch?v={vid}"
-        )
-        return stream_url, True
+        try:
+            async with aiohttp.ClientSession() as session:
+
+                # -------- AUDIO (default) --------
+                if not video:
+                    async with session.get(
+                        f"{MY_API_URL}/audio?url=https://www.youtube.com/watch?v={vid}",
+                        timeout=aiohttp.ClientTimeout(total=10),
+                    ) as r:
+                        data = await r.json()
+                        audio_url = data.get("audio_url")
+                        if audio_url:
+                            return audio_url, True
+                        return None, False
+
+                # -------- VIDEO (optional) --------
+                async with session.get(
+                    f"{MY_API_URL}/video?url=https://www.youtube.com/watch?v={vid}",
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as r:
+                    data = await r.json()
+                    video_url = data.get("video_url")
+                    if video_url:
+                        return video_url, True
+                    return None, False
+
+        except Exception:
+            return None, False
