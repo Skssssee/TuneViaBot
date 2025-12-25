@@ -1,5 +1,6 @@
+
 # Authored By Certified Coders © 2025
-# Fully Optimized + Track Fixed Version
+# Final Compatible + Optimized Version
 
 import asyncio
 import contextlib
@@ -102,7 +103,7 @@ async def cached_search(query: str) -> List[Dict]:
 
 
 # =========================
-# MAIN API
+# MAIN API CLASS
 # =========================
 class YouTubeAPI:
     def __init__(self) -> None:
@@ -124,7 +125,7 @@ class YouTubeAPI:
         return link.split("&")[0]
 
     # ---------------------
-    # EXTRACT URL
+    # EXTRACT URL FROM MESSAGE
     # ---------------------
     async def url(self, message: Message) -> Optional[str]:
         msgs = [message] + ([message.reply_to_message] if message.reply_to_message else [])
@@ -184,7 +185,7 @@ class YouTubeAPI:
         return bool(i and i.get("is_live"))
 
     # ---------------------
-    # ✅ TRACK (FIXED)
+    # TRACK (FIXED)
     # ---------------------
     @capture_internal_err
     async def track(
@@ -194,14 +195,13 @@ class YouTubeAPI:
     ) -> Tuple[Dict, str]:
 
         link = self._normalize(link, videoid)
-
         info = await self.info(link)
 
         if not info or not info.get("id"):
             info = await _run_yt_dlp(link)
 
         if not info:
-            raise ValueError(f"No track info found for: {link}")
+            raise ValueError("No track info found")
 
         thumb = (
             info.get("thumbnail")
@@ -270,27 +270,45 @@ class YouTubeAPI:
             return [e.get("id") for e in info.get("entries", [])] if info else []
 
     # ---------------------
-    # DOWNLOAD
+    # DOWNLOAD (✅ videoid supported)
     # ---------------------
+    @capture_internal_err
     async def download(
         self,
         link: str,
+        mystic=None,
         *,
-        video: bool = False
+        video: bool = False,
+        videoid: Union[str, None] = None
     ) -> Tuple[Optional[str], bool]:
 
-        link = self._normalize(link)
+        link = self._normalize(link, videoid)
 
+        # ---------- VIDEO ----------
         if video:
             if await self.is_live(link):
                 return link, False
 
             if await is_on_off(1):
-                p = await yt_dlp_download(link, type="video", title=await self.title(link))
-                return p, True
+                p = await yt_dlp_download(
+                    link,
+                    type="video",
+                    title=await self.title(link)
+                )
+                return (p, True) if p else (None, False)
 
-            info = await _run_yt_dlp("-g", "-f", "best[height<=720]", link)
-            return info, False
+            info = await _run_yt_dlp(
+                "-g",
+                "-f",
+                "best[height<=720][width<=1280]",
+                link
+            )
+            return (info, False) if info else (None, False)
 
-        p = await yt_dlp_download(link, type="audio", title=await self.title(link))
-        return p, True
+        # ---------- AUDIO ----------
+        p = await yt_dlp_download(
+            link,
+            type="audio",
+            title=await self.title(link)
+        )
+        return (p, True) if p else (None, False)
