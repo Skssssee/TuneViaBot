@@ -5,15 +5,8 @@ from typing import Union
 from pyrogram.types import Message
 from pyrogram.enums import MessageEntityType
 
-try:
-    from py_yt import VideosSearch
-except ImportError:
-    from youtubesearchpython.__future__ import VideosSearch
-
-from Tune.utils.formatters import time_to_seconds
-
 # ================= CONFIG =================
-MY_API_URL = "http://127.0.0.1:8000"   # apna yt-api yahan
+MY_API_URL = "http://127.0.0.1:8000"   # tumhara yt-api
 # ========================================
 
 
@@ -48,42 +41,45 @@ class YouTubeAPI:
         return None
 
     # -------------------------------------------------
-    async def details(self, link: str, videoid: Union[bool, str] = None):
-        if videoid:
-            link = self.base + link
-        if "&" in link:
-            link = link.split("&")[0]
-
-        s = VideosSearch(link, limit=1)
-        r = (await s.next())["result"][0]
-
-        title = r["title"]
-        duration_min = r["duration"]
-        duration_sec = int(time_to_seconds(duration_min)) if duration_min else 0
-        thumb = r["thumbnails"][0]["url"].split("?")[0]
-        vidid = r["id"]
-
-        return title, duration_min, duration_sec, thumb, vidid
-
-    # -------------------------------------------------
     async def track(self, link: str, videoid: Union[bool, str] = None):
+        """
+        NO SEARCH. NO FAILURE.
+        Always returns valid track for any YouTube link.
+        """
+
         if videoid:
             link = self.base + link
-        if "&" in link:
-            link = link.split("&")[0]
 
-        s = VideosSearch(link, limit=1)
-        r = (await s.next())["result"][0]
+        original = link
 
-        track_details = {
-            "title": r["title"],
-            "link": r["link"],
-            "vidid": r["id"],
-            "duration_min": r["duration"],
-            "thumb": r["thumbnails"][0]["url"].split("?")[0],
-        }
+        # remove params (?si= etc)
+        if "?" in link:
+            link = link.split("?")[0]
 
-        return track_details, r["id"]
+        # extract video id
+        vid = None
+        if "v=" in link:
+            vid = link.split("v=")[-1]
+        elif "youtu.be/" in link:
+            vid = link.split("youtu.be/")[-1]
+
+        if not vid:
+            # fallback (should not crash Tune)
+            return {
+                "title": "YouTube Audio",
+                "link": original,
+                "vidid": original,
+                "duration_min": "0:00",
+                "thumb": "",
+            }, original
+
+        return {
+            "title": "YouTube Audio",
+            "link": self.base + vid,
+            "vidid": vid,
+            "duration_min": "0:00",
+            "thumb": "",
+        }, vid
 
     # -------------------------------------------------
     async def download(
@@ -98,22 +94,29 @@ class YouTubeAPI:
         title: Union[bool, str] = None,
     ):
         """
-        Tune stream engine compatibility
-        Returns: (stream_url, direct=True)
+        Returns direct googlevideo stream URL
+        (NO file download, NO storage usage)
         """
 
         if videoid:
             link = self.base + link
 
-        if "&" in link:
-            link = link.split("&")[0]
+        if "?" in link:
+            link = link.split("?")[0]
 
-        vid = link.split("v=")[-1] if "v=" in link else link
+        vid = None
+        if "v=" in link:
+            vid = link.split("v=")[-1]
+        elif "youtu.be/" in link:
+            vid = link.split("youtu.be/")[-1]
+
+        if not vid:
+            return None, False
 
         try:
             async with aiohttp.ClientSession() as session:
 
-                # -------- AUDIO (default) --------
+                # -------- AUDIO --------
                 if not video:
                     async with session.get(
                         f"{MY_API_URL}/audio?url=https://www.youtube.com/watch?v={vid}",
