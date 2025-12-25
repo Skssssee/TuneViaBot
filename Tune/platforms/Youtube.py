@@ -1,172 +1,186 @@
 # Authored By Certified Coders © 2025
-# Optimized for FAST VC Streaming (NO DOWNLOAD)
+# Fixed & Optimized by ChatGPT
 
+import re
+import json
 import asyncio
 import contextlib
-import json
-import os
-import re
-from typing import Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
-from pyrogram.enums import MessageEntityType
-from pyrogram.types import Message
+import yt_dlp
 from youtubesearchpython import VideosSearch
+from pyrogram.types import Message
+from pyrogram.enums import MessageEntityType
 
-from Tune.utils.cookie_handler import COOKIE_PATH
-from Tune.utils.errors import capture_internal_err
 from Tune.utils.formatters import time_to_seconds
+from Tune.utils.errors import capture_internal_err
 
 
-YTDLP_TIMEOUT = 12
+YOUTUBE_REGEX = re.compile(r"(youtube\.com|youtu\.be)")
+BASE_URL = "https://www.youtube.com/watch?v="
 
-
-# ===================== HELPERS =====================
-
-def _cookiefile() -> Optional[str]:
-    try:
-        if COOKIE_PATH and os.path.exists(COOKIE_PATH) and os.path.getsize(COOKIE_PATH) > 0:
-            return str(COOKIE_PATH)
-    except Exception:
-        pass
-    return None
-
-
-async def _exec(*args: str) -> Tuple[str, str]:
-    proc = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    try:
-        out, err = await asyncio.wait_for(proc.communicate(), timeout=YTDLP_TIMEOUT)
-        return out.decode().strip(), err.decode().strip()
-    except asyncio.TimeoutError:
-        with contextlib.suppress(Exception):
-            proc.kill()
-        return "", "timeout"
-
-
-# ===================== MAIN CLASS =====================
 
 class YouTubeAPI:
     def __init__(self):
-        self.base = "https://www.youtube.com/watch?v="
-        self.regex = re.compile(r"(youtube\.com|youtu\.be)")
+        pass
 
-    # ---------- URL EXTRACT (FIXES AttributeError url) ----------
-    @capture_internal_err
+    # --------------------------------------------------
+    # URL PARSER
+    # --------------------------------------------------
+    def _clean_url(self, link: str) -> str:
+        if "youtu.be/" in link:
+            return BASE_URL + link.split("/")[-1].split("?")[0]
+        if "watch?v=" in link:
+            return link.split("&")[0]
+        if "shorts/" in link or "live/" in link:
+            return BASE_URL + link.split("/")[-1].split("?")[0]
+        return link
+
+    # --------------------------------------------------
+    # CHECK YOUTUBE LINK
+    # --------------------------------------------------
+    async def exists(self, link: str, videoid: Union[str, bool, None] = None) -> bool:
+        if videoid:
+            link = BASE_URL + videoid
+        return bool(YOUTUBE_REGEX.search(link))
+
+    # --------------------------------------------------
+    # GET URL FROM MESSAGE
+    # --------------------------------------------------
     async def url(self, message: Message) -> Optional[str]:
-        texts = [message]
+        msgs = [message]
         if message.reply_to_message:
-            texts.append(message.reply_to_message)
+            msgs.append(message.reply_to_message)
 
-        for msg in texts:
+        for msg in msgs:
             text = msg.text or msg.caption or ""
             entities = (msg.entities or []) + (msg.caption_entities or [])
             for ent in entities:
                 if ent.type == MessageEntityType.URL:
-                    return text[ent.offset: ent.offset + ent.length].split("&")[0]
+                    return text[ent.offset : ent.offset + ent.length]
                 if ent.type == MessageEntityType.TEXT_LINK:
-                    return ent.url.split("&")[0]
+                    return ent.url
         return None
 
-    # ---------- CHECK ----------
-    async def exists(self, link: str, videoid: Union[str, bool, None] = None) -> bool:
+    # --------------------------------------------------
+    # SEARCH VIDEO (FAST)
+    # --------------------------------------------------
+    def _search(self, query: str) -> Optional[Dict]:
+        search = VideosSearch(query, limit=1)
+        data = search.result()
+        if not data or not data.get("result"):
+            return None
+        return data["result"][0]
+
+    # --------------------------------------------------
+    # DETAILS (USED BY STREAM.PY)
+    # --------------------------------------------------
+    async def details(
+        self, link: str, videoid: Union[str, bool, None] = None
+    ) -> Tuple[str, Optional[str], int, str, str]:
+
         if videoid:
-            link = self.base + str(videoid)
-        return bool(self.regex.search(link))
+            link = BASE_URL + videoid
 
-    # ---------- SEARCH / DETAILS ----------
-    @capture_internal_err
-    async def details(self, query: str, videoid: Union[str, bool, None] = None):
+        link = self._clean_url(link)
+        info = self._search(link)
+
+        if not info:
+            raise Exception("No video found")
+
+        title = info["title"]
+        duration = info.get("duration")
+        duration_sec = int(time_to_seconds(duration)) if duration else 0
+        thumb = info["thumbnails"][0]["url"].split("?")[0]
+        vidid = info["id"]
+
+        return title, duration, duration_sec, thumb, vidid
+
+    # --------------------------------------------------
+    # TRACK (USED BY /play)
+    # --------------------------------------------------
+    async def track(
+        self, link: str, videoid: Union[str, bool, None] = None
+    ) -> Tuple[Dict, str]:
+
         if videoid:
-            query = self.base + str(videoid)
+            link = BASE_URL + videoid
 
-        query = query.split("&")[0]
-        data = await VideosSearch(query, limit=1).next()
+        link = self._clean_url(link)
+        info = self._search(link)
 
-        if not data.get("result"):
-            raise Exception("No results")
-
-        r = data["result"][0]
-        dur = r.get("duration")
-        dur_sec = int(time_to_seconds(dur)) if dur else 0
-
-        return (
-            r["title"],
-            dur,
-            dur_sec,
-            r["thumbnails"][0]["url"].split("?")[0],
-            r["id"],
-        )
-
-    # ---------- TRACK ----------
-    @capture_internal_err
-    async def track(self, query: str, videoid: Union[str, bool, None] = None):
-        if videoid:
-            query = self.base + str(videoid)
-
-        query = query.split("&")[0]
-        data = await VideosSearch(query, limit=1).next()
-
-        if not data.get("result"):
+        if not info:
             raise Exception("Track not found")
 
-        r = data["result"][0]
-        return {
-            "title": r["title"],
-            "link": r["link"],
-            "vidid": r["id"],
-            "duration_min": r.get("duration"),
-            "thumb": r["thumbnails"][0]["url"].split("?")[0],
-        }, r["id"]
+        track = {
+            "title": info["title"],
+            "link": info["link"],
+            "vidid": info["id"],
+            "duration_min": info.get("duration"),
+            "thumb": info["thumbnails"][0]["url"].split("?")[0],
+        }
 
-    # ---------- CORE STREAM (FAST & SAFE) ----------
-    @capture_internal_err
-    async def _stream_url(self, vidid: str) -> str:
-        url = self.base + vidid
-        cookies = _cookiefile()
+        return track, info["id"]
 
-        cmd = [
-            "yt-dlp",
-            "-g",
-            "-f",
-            "bestaudio",
-            "--no-playlist",
-            "--extractor-args",
-            "youtube:player_client=android",
-            url,
-        ]
-
-        if cookies:
-            cmd.insert(1, "--cookies")
-            cmd.insert(2, cookies)
-
-        out, err = await _exec(*cmd)
-        if not out:
-            raise Exception(err or "yt-dlp failed")
-
-        return out.split("\n")[0]
-
-    # ---------- DOWNLOAD (STREAM ONLY) ----------
-    @capture_internal_err
+    # --------------------------------------------------
+    # STREAM URL (NO DOWNLOAD)
+    # --------------------------------------------------
     async def download(
         self,
         link: str,
         mystic=None,
         video: Union[bool, str, None] = None,
         videoid: Union[str, bool, None] = None,
-        **_
-    ):
-        vidid = videoid or link.split("v=")[-1].split("&")[0]
-        stream = await self._stream_url(vidid)
+        **kwargs,
+    ) -> Tuple[str, bool]:
 
-        # IMPORTANT:
-        # True = direct stream (NO DOWNLOAD)
-        return stream, True
+        if videoid:
+            link = BASE_URL + videoid
 
-    # ---------- LIVE ----------
-    @capture_internal_err
+        link = self._clean_url(link)
+
+        ydl_opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "format": "bestaudio/best",
+        }
+
+        loop = asyncio.get_event_loop()
+
+        def _extract():
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(link, download=False)
+                return info.get("url")
+
+        stream_url = await loop.run_in_executor(None, _extract)
+
+        if not stream_url:
+            raise Exception("Audio stream not found")
+
+        # True = direct stream (no file)
+        return stream_url, True
+
+    # --------------------------------------------------
+    # LIVE VIDEO SUPPORT
+    # --------------------------------------------------
     async def video(self, link: str):
-        vidid = link.split("v=")[-1].split("&")[0]
-        return 1, await self._stream_url(vidid)
+        link = self._clean_url(link)
+
+        ydl_opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "format": "best",
+        }
+
+        def _extract():
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(link, download=False)
+                return info.get("url")
+
+        loop = asyncio.get_event_loop()
+        url = await loop.run_in_executor(None, _extract)
+
+        if not url:
+            return 0, None
+
+        return 1, url
