@@ -6,7 +6,7 @@ from pyrogram.types import Message
 from pyrogram.enums import MessageEntityType
 
 # ================= CONFIG =================
-MY_API_URL = "http://127.0.0.1:8000"   # tumhara yt-api
+MY_API_URL = "http://152.42.187.207:8000"   # tumhara yt-api
 # ========================================
 
 
