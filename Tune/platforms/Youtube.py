@@ -1,11 +1,12 @@
+
 # ===============================
 # TuneViaBot - YouTube Platform
-# API BASED (AUDIO + VIDEO)
+# API STREAM BASED (VC COMPATIBLE)
 # ===============================
 
 import re
 import aiohttp
-from typing import Union, Tuple
+from typing import Tuple, Union
 
 from pyrogram.enums import MessageEntityType
 from pyrogram.types import Message
@@ -19,7 +20,7 @@ except ImportError:
 
 
 # ===============================
-# CONFIG (YOUR API)
+# CONFIG
 # ===============================
 AUDIO_API = "http://152.42.187.207:8000/audio"
 VIDEO_API = "http://152.42.187.207:8000/video"
@@ -91,16 +92,14 @@ class YouTubeAPI:
         }, vid
 
     # -------------------------
+    async def video(self, *args, **kwargs):
+        return 0, None
+
     async def playlist(self, *args, **kwargs):
         return []
 
-    # -------------------------
-    async def video(self, link: str, videoid=None):
-        # Live not supported
-        return 0, None
-
     # ===============================
-    # 🔥 MAIN DOWNLOAD (STREAM)
+    # 🔥 MAIN FUNCTION (FIXED)
     # ===============================
     async def download(
         self,
@@ -111,26 +110,26 @@ class YouTubeAPI:
         **kwargs,
     ) -> Tuple[str | None, bool]:
 
-        # Always use full YouTube URL
         link = self.base + link if videoid else link
-
-        api_url = VIDEO_API if video else AUDIO_API
+        api = VIDEO_API if video else AUDIO_API
 
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
-                    api_url,
+                    api,
                     params={"url": link},
+                    allow_redirects=False,
                     timeout=aiohttp.ClientTimeout(total=15),
                 ) as r:
 
-                    if r.status != 200:
+                    # 🔥 MOST IMPORTANT LINE
+                    stream_url = r.headers.get("location")
+
+                    if not stream_url:
                         return None, False
 
-                    # IMPORTANT:
-                    # We return API endpoint itself
-                    # pytgcalls will stream from it
-                    return str(r.url), False
+                    # ✅ FINAL DIRECT GOOGLEVIDEO URL
+                    return stream_url, False
 
         except Exception:
             return None, False
