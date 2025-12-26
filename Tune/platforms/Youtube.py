@@ -1,10 +1,13 @@
+
+
 # ===============================
-# TuneViaBot - YouTube Platform
-# LAZY STREAM (NO PREFETCH)
+# TuneViaBot - Youtube Platform
+# STREAM BASED (NO FILE DOWNLOAD)
 # ===============================
 
 import re
-from typing import Tuple, Union
+import aiohttp
+from typing import Union, Tuple
 
 from pyrogram.enums import MessageEntityType
 from pyrogram.types import Message
@@ -17,11 +20,8 @@ except ImportError:
     from youtubesearchpython import VideosSearch
 
 
-# ===============================
-# API CONFIG (YOUR VPS)
-# ===============================
-AUDIO_API = "http://152.42.187.207:8000/audio"
-VIDEO_API = "http://152.42.187.207:8000/video"
+# 🔥 YOUR AUDIO API (returns JSON: { "audio": "<direct_url>" })
+YT_API = "http://152.42.187.207:8000/audio"
 
 
 # ===============================
@@ -36,7 +36,7 @@ def extract_video_id(url: str) -> str:
 
 
 # ===============================
-# YOUTUBE CLASS
+# YOUTUBE API CLASS
 # ===============================
 class YouTubeAPI:
     def __init__(self):
@@ -80,6 +80,7 @@ class YouTubeAPI:
     # -------------------------
     async def track(self, link: str, videoid=None):
         title, dur, _, thumb, vid = await self.details(link, videoid)
+
         return {
             "title": title,
             "link": self.base + vid,
@@ -89,14 +90,15 @@ class YouTubeAPI:
         }, vid
 
     # -------------------------
-    async def video(self, *args, **kwargs):
-        return 0, None
+    async def video(self, link: str, videoid=None):
+        return 0, "Video not supported"
 
+    # -------------------------
     async def playlist(self, *args, **kwargs):
         return []
 
     # ===============================
-    # 🔥 MAIN STREAM FETCHER (LAZY)
+    # 🔥 MAIN STREAM FUNCTION
     # ===============================
     async def download(
         self,
@@ -107,16 +109,29 @@ class YouTubeAPI:
         **kwargs,
     ) -> Tuple[str | None, bool]:
 
-        # build full youtube link
         link = self.base + link if videoid else link
+        vid = extract_video_id(link)
 
-        # 🔥 IMPORTANT
-        # ❌ NO API CALL HERE
-        # ❌ NO DOWNLOAD HERE
-        # ✅ JUST RETURN STREAM URL
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    YT_API,
+                    params={"url": vid},
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as r:
 
-        api = VIDEO_API if video else AUDIO_API
-        stream_url = f"{api}?url={link}"
+                    if r.status != 200:
+                        return None, False
 
-        # second value = direct (False is correct)
-        return stream_url, False 
+                    data = await r.json()
+                    audio_url = data.get("audio")
+
+                    if not audio_url:
+                        return None, False
+
+                    # ✅ VERY IMPORTANT
+                    # direct=True => StreamController knows this is HTTP stream
+                    return audio_url, True
+
+        except Exception:
+            return None, False
