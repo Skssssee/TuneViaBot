@@ -1,12 +1,11 @@
-
 # ===============================
 # TuneViaBot - YouTube Platform
-# API STREAM BASED (VC COMPATIBLE)
+# STREAM BASED (API DRIVEN)
 # ===============================
 
 import re
 import aiohttp
-from typing import Tuple, Union
+from typing import Union, Tuple
 
 from pyrogram.enums import MessageEntityType
 from pyrogram.types import Message
@@ -20,7 +19,7 @@ except ImportError:
 
 
 # ===============================
-# CONFIG
+# YOUR API ENDPOINTS
 # ===============================
 AUDIO_API = "http://152.42.187.207:8000/audio"
 VIDEO_API = "http://152.42.187.207:8000/video"
@@ -72,17 +71,16 @@ class YouTubeAPI:
         data = (await res.next())["result"][0]
 
         title = data["title"]
-        dur = data.get("duration")
-        dur_s = int(time_to_seconds(dur)) if dur else 0
+        duration = data.get("duration")
+        duration_sec = int(time_to_seconds(duration)) if duration else 0
         thumb = data["thumbnails"][0]["url"].split("?")[0]
         vid = data["id"]
 
-        return title, dur, dur_s, thumb, vid
+        return title, duration, duration_sec, thumb, vid
 
     # -------------------------
     async def track(self, link: str, videoid=None):
         title, dur, _, thumb, vid = await self.details(link, videoid)
-
         return {
             "title": title,
             "link": self.base + vid,
@@ -92,14 +90,15 @@ class YouTubeAPI:
         }, vid
 
     # -------------------------
-    async def video(self, *args, **kwargs):
-        return 0, None
-
     async def playlist(self, *args, **kwargs):
         return []
 
+    # -------------------------
+    async def video(self, *args, **kwargs):
+        return 0, None
+
     # ===============================
-    # 🔥 MAIN FUNCTION (FIXED)
+    # 🔥 MAIN DOWNLOAD (STREAM) METHOD
     # ===============================
     async def download(
         self,
@@ -118,17 +117,26 @@ class YouTubeAPI:
                 async with session.get(
                     api,
                     params={"url": link},
-                    allow_redirects=False,
                     timeout=aiohttp.ClientTimeout(total=15),
                 ) as r:
 
-                    # 🔥 MOST IMPORTANT LINE
-                    stream_url = r.headers.get("location")
+                    if r.status != 200:
+                        return None, False
+
+                    data = await r.json()
+
+                    # AUDIO
+                    if not video:
+                        stream_url = data.get("audio")
+                    # VIDEO
+                    else:
+                        stream_url = data.get("video")
 
                     if not stream_url:
                         return None, False
 
-                    # ✅ FINAL DIRECT GOOGLEVIDEO URL
+                    # 🔥 IMPORTANT
+                    # False = NOT LOCAL FILE
                     return stream_url, False
 
         except Exception:
