@@ -1,11 +1,9 @@
 # ===============================
 # TuneViaBot - Youtube Platform
-# Stable • Fail-safe • Production
+# STREAM BASED (NO FILE DOWNLOAD)
 # ===============================
 
-import os
 import re
-import yt_dlp
 import aiohttp
 from typing import Union, Tuple
 
@@ -13,7 +11,6 @@ from pyrogram.enums import MessageEntityType
 from pyrogram.types import Message
 
 from Tune.utils.formatters import time_to_seconds
-from Tune.utils.errors import capture_internal_err
 
 try:
     from youtubesearchpython.__future__ import VideosSearch
@@ -21,17 +18,14 @@ except ImportError:
     from youtubesearchpython import VideosSearch
 
 
-# ===== CONFIG =====
+# 🔥 YOUR AUDIO API
 YT_API = "http://152.42.187.207:8000/audio"
-DOWNLOAD_DIR = "downloads"
-os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 
 # ===============================
-# Helpers
+# HELPERS
 # ===============================
-
-def _video_id(url: str) -> str:
+def extract_video_id(url: str) -> str:
     if "v=" in url:
         return url.split("v=")[1].split("&")[0]
     if "youtu.be/" in url:
@@ -39,78 +33,9 @@ def _video_id(url: str) -> str:
     return url.strip()
 
 
-async def _download_from_api(video_id: str) -> str | None:
-    """
-    Download REAL audio from external API
-    """
-    out = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp3")
-
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                YT_API,
-                params={"url": video_id},
-                timeout=aiohttp.ClientTimeout(total=20),
-            ) as r:
-
-                if r.status != 200:
-                    return None
-
-                # ❌ JSON response = not audio
-                if "application/json" in r.headers.get("content-type", ""):
-                    return None
-
-                with open(out, "wb") as f:
-                    async for chunk in r.content.iter_chunked(1024 * 64):
-                        f.write(chunk)
-
-        if os.path.exists(out) and os.path.getsize(out) > 50_000:
-            return out
-
-        return None
-
-    except Exception:
-        return None
-
-
-def _fallback_yt_dlp(url: str) -> str | None:
-    """
-    Local yt-dlp fallback (last resort)
-    """
-    vid = _video_id(url)
-    out = os.path.join(DOWNLOAD_DIR, f"{vid}.mp3")
-
-    opts = {
-        "format": "bestaudio",
-        "outtmpl": out,
-        "quiet": True,
-        "noplaylist": True,
-        "postprocessors": [
-            {
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": "mp3",
-                "preferredquality": "192",
-            }
-        ],
-    }
-
-    try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            ydl.download([url])
-
-        if os.path.exists(out) and os.path.getsize(out) > 50_000:
-            return out
-
-        return None
-
-    except Exception:
-        return None
-
-
 # ===============================
-# YouTube API (Main)
+# YOUTUBE API CLASS
 # ===============================
-
 class YouTubeAPI:
     def __init__(self):
         self.base = "https://www.youtube.com/watch?v="
@@ -121,7 +46,7 @@ class YouTubeAPI:
         return bool(re.search(self.regex, link))
 
     # -------------------------
-    async def url(self, message: Message):
+    async def url(self, message: Message) -> Union[str, None]:
         msgs = [message]
         if message.reply_to_message:
             msgs.append(message.reply_to_message)
@@ -138,33 +63,17 @@ class YouTubeAPI:
 
     # -------------------------
     async def details(self, link: str, videoid=None):
-        """
-        NEVER FAILS – even if search breaks
-        """
-        try:
-            link = self.base + link if videoid else link
-            res = VideosSearch(link, limit=1)
-            data = (await res.next()).get("result")
+        link = self.base + link if videoid else link
+        res = VideosSearch(link, limit=1)
+        data = (await res.next())["result"][0]
 
-            if not data:
-                raise ValueError
+        title = data["title"]
+        dur = data.get("duration")
+        dur_s = int(time_to_seconds(dur)) if dur else 0
+        thumb = data["thumbnails"][0]["url"].split("?")[0]
+        vid = data["id"]
 
-            data = data[0]
-            title = data.get("title")
-            dur = data.get("duration")
-            thumb = data.get("thumbnails", [{}])[0].get("url", "").split("?")[0]
-            vid = data.get("id")
-
-            if not title or not vid:
-                raise ValueError
-
-            dur_s = int(time_to_seconds(dur)) if dur else 0
-            return title, dur, dur_s, thumb, vid
-
-        except Exception:
-            # 🔥 SAFE FALLBACK
-            vid = _video_id(link)
-            return "Unknown Title", None, 0, "", vid
+        return title, dur, dur_s, thumb, vid
 
     # -------------------------
     async def track(self, link: str, videoid=None):
@@ -179,14 +88,16 @@ class YouTubeAPI:
         }, vid
 
     # -------------------------
-    async def video(self, *args, **kwargs):
+    async def video(self, link: str, videoid=None):
         return 0, "Video not supported"
 
     # -------------------------
     async def playlist(self, *args, **kwargs):
         return []
 
-    # -------------------------
+    # ===============================
+    # 🔥 MAIN DOWNLOAD FUNCTION
+    # ===============================
     async def download(
         self,
         link: str,
@@ -197,16 +108,29 @@ class YouTubeAPI:
     ) -> Tuple[str | None, bool]:
 
         link = self.base + link if videoid else link
-        vid = _video_id(link)
+        vid = extract_video_id(link)
 
-        # 1️⃣ External API
-        path = await _download_from_api(vid)
-        if path:
-            return path, True
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    YT_API,
+                    params={"url": vid},
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as r:
 
-        # 2️⃣ yt-dlp fallback
-        path = _fallback_yt_dlp(link)
-        if path:
-            return path, True
+                    if r.status != 200:
+                        return None, False
 
-        return None, False
+                    data = await r.json()
+                    audio_url = data.get("audio")
+
+                    if not audio_url:
+                        return None, False
+
+                    # ✅ IMPORTANT
+                    # Returning direct stream URL
+                    # False => NOT local file
+                    return audio_url, False
+
+        except Exception:
+            return None, False
