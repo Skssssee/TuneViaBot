@@ -1,3 +1,4 @@
+
 # ===============================
 # TuneViaBot - Youtube Platform
 # STREAM BASED (NO FILE DOWNLOAD)
@@ -18,7 +19,7 @@ except ImportError:
     from youtubesearchpython import VideosSearch
 
 
-# 🔥 YOUR AUDIO API
+# 🔥 YOUR AUDIO API (returns JSON: { "audio": "<direct_url>" })
 YT_API = "http://152.42.187.207:8000/audio"
 
 
@@ -96,7 +97,7 @@ class YouTubeAPI:
         return []
 
     # ===============================
-    # 🔥 MAIN DOWNLOAD FUNCTION
+    # 🔥 MAIN STREAM FUNCTION
     # ===============================
     async def download(
         self,
@@ -127,10 +128,9 @@ class YouTubeAPI:
                     if not audio_url:
                         return None, False
 
-                    # ✅ IMPORTANT
-                    # Returning direct stream URL
-                    # False => NOT local file
-                    return audio_url, False
+                    # ✅ VERY IMPORTANT
+                    # direct=True => StreamController knows this is HTTP stream
+                    return audio_url, True
 
         except Exception:
             return None, False
