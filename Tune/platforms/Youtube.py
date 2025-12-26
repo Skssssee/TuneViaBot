@@ -1,8 +1,13 @@
-# Tune/platforms/Youtube.py
 
-import asyncio
+# ===============================
+# TuneViaBot - Youtube Platform
+# Fixed & Compatible
+# ===============================
+
 import os
 import re
+import json
+import asyncio
 from typing import Union, Tuple
 
 import aiohttp
@@ -12,60 +17,77 @@ from pyrogram.enums import MessageEntityType
 from pyrogram.types import Message
 
 from Tune.utils.formatters import time_to_seconds
-from Tune.utils.errors import AssistantErr
-from Tune import LOGGER
+from Tune.utils.errors import capture_internal_err
 
 try:
-    from py_yt import VideosSearch
-except ImportError:
     from youtubesearchpython.__future__ import VideosSearch
+except ImportError:
+    from youtubesearchpython import VideosSearch
 
 
-LOGGER = LOGGER(__name__)
-
-BASE_URL = "https://www.youtube.com/watch?v="
-YT_REGEX = re.compile(r"(youtube\.com|youtu\.be)")
-
+# ===== CONFIG =====
+YT_API = "http://152.42.187.207:8000/audio"
 DOWNLOAD_DIR = "downloads"
+
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 
-# =========================
-# INTERNAL HELPERS
-# =========================
-
-def clean_url(link: str) -> str:
-    if "youtu.be/" in link:
-        return BASE_URL + link.split("/")[-1].split("?")[0]
-    if "watch?v=" in link:
-        return link.split("&")[0]
-    return link
+# ===== HELPERS =====
+def _video_id(url: str) -> str:
+    if "v=" in url:
+        return url.split("v=")[1].split("&")[0]
+    if "youtu.be/" in url:
+        return url.split("youtu.be/")[1].split("?")[0]
+    return url.strip()
 
 
-async def yt_search(query: str):
-    search = VideosSearch(query, limit=1)
-    data = await search.next()
-    if not data or not data.get("result"):
+async def _download_from_api(video_id: str) -> str | None:
+    """
+    Fetch audio stream URL from API and save real audio file
+    """
+    out_file = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp3")
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                YT_API,
+                params={"url": video_id},
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as r:
+
+                if r.status != 200:
+                    return None
+
+                ct = r.headers.get("content-type", "")
+                if "application/json" in ct:
+                    # ❌ JSON = NOT AUDIO
+                    return None
+
+                with open(out_file, "wb") as f:
+                    async for chunk in r.content.iter_chunked(1024 * 64):
+                        f.write(chunk)
+
+        if os.path.exists(out_file) and os.path.getsize(out_file) > 50_000:
+            return out_file
+
         return None
-    return data["result"][0]
+
+    except Exception:
+        return None
 
 
-# =========================
-# DOWNLOAD HELPERS
-# =========================
-
-async def yt_dlp_audio(link: str) -> str:
-    vid = link.split("v=")[-1]
-    out = f"{DOWNLOAD_DIR}/{vid}.mp3"
-
-    if os.path.exists(out) and os.path.getsize(out) > 100_000:
-        return out
+def _fallback_yt_dlp(url: str) -> str | None:
+    """
+    Local yt-dlp fallback
+    """
+    vid = _video_id(url)
+    out = os.path.join(DOWNLOAD_DIR, f"{vid}.mp3")
 
     ydl_opts = {
-        "format": "bestaudio/best",
-        "outtmpl": f"{DOWNLOAD_DIR}/{vid}.%(ext)s",
+        "format": "bestaudio",
+        "outtmpl": out,
         "quiet": True,
-        "no_warnings": True,
+        "noplaylist": True,
         "postprocessors": [
             {
                 "key": "FFmpegExtractAudio",
@@ -75,36 +97,33 @@ async def yt_dlp_audio(link: str) -> str:
         ],
     }
 
-    loop = asyncio.get_event_loop()
-
-    def run():
+    try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([link])
+            ydl.download([url])
 
-    await loop.run_in_executor(None, run)
+        if os.path.exists(out) and os.path.getsize(out) > 50_000:
+            return out
 
-    if not os.path.exists(out) or os.path.getsize(out) < 100_000:
-        raise AssistantErr("FAILED TO DOWNLOAD AUDIO")
+        return None
 
-    return out
+    except Exception:
+        return None
 
 
-# =========================
-# MAIN CLASS
-# =========================
-
+# ===============================
+# YouTube API Class
+# ===============================
 class YouTubeAPI:
     def __init__(self):
-        self.base = BASE_URL
+        self.base = "https://www.youtube.com/watch?v="
+        self.regex = r"(youtube\.com|youtu\.be)"
 
     # -------------------------
-    async def exists(self, link: str, videoid: Union[str, bool] = None):
-        if videoid:
-            link = self.base + videoid
-        return bool(YT_REGEX.search(link))
+    async def exists(self, link: str, videoid=None) -> bool:
+        return bool(re.search(self.regex, link))
 
     # -------------------------
-    async def url(self, message: Message):
+    async def url(self, message: Message) -> str | None:
         msgs = [message]
         if message.reply_to_message:
             msgs.append(message.reply_to_message)
@@ -112,74 +131,68 @@ class YouTubeAPI:
         for msg in msgs:
             text = msg.text or msg.caption or ""
             entities = (msg.entities or []) + (msg.caption_entities or [])
-            for ent in entities:
-                if ent.type == MessageEntityType.URL:
-                    return text[ent.offset : ent.offset + ent.length]
-                if ent.type == MessageEntityType.TEXT_LINK:
-                    return ent.url
+            for e in entities:
+                if e.type == MessageEntityType.URL:
+                    return text[e.offset : e.offset + e.length]
+                if e.type == MessageEntityType.TEXT_LINK:
+                    return e.url
         return None
 
     # -------------------------
-    async def details(
-        self, link: str, videoid: Union[str, bool] = None
-    ) -> Tuple[str, str, int, str, str]:
+    async def details(self, link: str, videoid=None):
+        link = self.base + link if videoid else link
+        res = VideosSearch(link, limit=1)
+        data = (await res.next())["result"][0]
 
-        if videoid:
-            link = self.base + videoid
+        title = data["title"]
+        dur = data.get("duration")
+        dur_s = int(time_to_seconds(dur)) if dur else 0
+        thumb = data["thumbnails"][0]["url"].split("?")[0]
+        vid = data["id"]
 
-        link = clean_url(link)
-        result = await yt_search(link)
-
-        if not result:
-            raise AssistantErr("FAILED TO FETCH TRACK DETAILS")
-
-        title = result.get("title")
-        duration = result.get("duration")
-        thumb = result["thumbnails"][0]["url"].split("?")[0]
-        vidid = result["id"]
-        duration_sec = int(time_to_seconds(duration)) if duration else 0
-
-        return title, duration, duration_sec, thumb, vidid
+        return title, dur, dur_s, thumb, vid
 
     # -------------------------
-    async def track(self, link: str, videoid: Union[str, bool] = None):
-        if videoid:
-            link = self.base + videoid
+    async def track(self, link: str, videoid=None):
+        title, dur, _, thumb, vid = await self.details(link, videoid)
 
-        link = clean_url(link)
-        result = await yt_search(link)
+        return {
+            "title": title,
+            "link": self.base + vid,
+            "vidid": vid,
+            "duration_min": dur,
+            "thumb": thumb,
+        }, vid
 
-        if not result:
-            raise AssistantErr("FAILED TO FETCH TRACK DETAILS")
+    # -------------------------
+    async def video(self, link: str, videoid=None):
+        return 0, "Video not supported"
 
-        track = {
-            "title": result["title"],
-            "link": result["link"],
-            "vidid": result["id"],
-            "duration_min": result.get("duration"),
-            "thumb": result["thumbnails"][0]["url"].split("?")[0],
-        }
-
-        return track, result["id"]
+    # -------------------------
+    async def playlist(self, *args, **kwargs):
+        return []
 
     # -------------------------
     async def download(
         self,
         link: str,
         mystic=None,
-        video: Union[bool, str] = None,
-        videoid: Union[str, bool] = None,
+        video: bool = False,
+        videoid=None,
         **kwargs,
-    ):
+    ) -> Tuple[str | None, bool]:
 
-        if videoid:
-            link = self.base + videoid
+        link = self.base + link if videoid else link
+        vid = _video_id(link)
 
-        link = clean_url(link)
-
-        try:
-            path = await yt_dlp_audio(link)
+        # 1️⃣ Try external API
+        path = await _download_from_api(vid)
+        if path:
             return path, True
-        except Exception as e:
-            LOGGER.error(f"Download failed: {e}")
-            return None, False
+
+        # 2️⃣ Fallback yt-dlp
+        path = _fallback_yt_dlp(link)
+        if path:
+            return path, True
+
+        return None, False
