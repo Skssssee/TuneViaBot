@@ -1,8 +1,6 @@
-
 # ===============================
 # TuneViaBot - YouTube Platform
-# STREAM ONLY (NO DOWNLOAD)
-# AUDIO + VIDEO (360p)
+# API BASED (AUDIO + VIDEO)
 # ===============================
 
 import re
@@ -21,7 +19,7 @@ except ImportError:
 
 
 # ===============================
-# YOUR APIs
+# CONFIG (YOUR API)
 # ===============================
 AUDIO_API = "http://152.42.187.207:8000/audio"
 VIDEO_API = "http://152.42.187.207:8000/video"
@@ -83,6 +81,7 @@ class YouTubeAPI:
     # -------------------------
     async def track(self, link: str, videoid=None):
         title, dur, _, thumb, vid = await self.details(link, videoid)
+
         return {
             "title": title,
             "link": self.base + vid,
@@ -96,11 +95,12 @@ class YouTubeAPI:
         return []
 
     # -------------------------
-    async def video(self, *args, **kwargs):
-        return 0, "Live not supported"
+    async def video(self, link: str, videoid=None):
+        # Live not supported
+        return 0, None
 
     # ===============================
-    # 🔥 MAIN FUNCTION USED BY BOT
+    # 🔥 MAIN DOWNLOAD (STREAM)
     # ===============================
     async def download(
         self,
@@ -111,32 +111,26 @@ class YouTubeAPI:
         **kwargs,
     ) -> Tuple[str | None, bool]:
 
+        # Always use full YouTube URL
         link = self.base + link if videoid else link
-        vid = extract_video_id(link)
-        yt_url = f"https://youtu.be/{vid}"
 
-        api = VIDEO_API if video else AUDIO_API
+        api_url = VIDEO_API if video else AUDIO_API
 
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
-                    api,
-                    params={"url": yt_url},
+                    api_url,
+                    params={"url": link},
                     timeout=aiohttp.ClientTimeout(total=15),
                 ) as r:
 
                     if r.status != 200:
                         return None, False
 
-                    data = await r.json()
-
-                    stream_url = data.get("video") if video else data.get("audio")
-                    if not stream_url:
-                        return None, False
-
-                    # 🔥 DIRECT STREAM URL
-                    # False = NOT LOCAL FILE
-                    return stream_url, False
+                    # IMPORTANT:
+                    # We return API endpoint itself
+                    # pytgcalls will stream from it
+                    return str(r.url), False
 
         except Exception:
             return None, False
