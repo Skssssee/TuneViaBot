@@ -1,10 +1,9 @@
 # ===============================
 # TuneViaBot - YouTube Platform
-# API STREAM BASED (VC READY)
+# LAZY STREAM (NO PREFETCH)
 # ===============================
 
 import re
-import aiohttp
 from typing import Tuple, Union
 
 from pyrogram.enums import MessageEntityType
@@ -59,7 +58,7 @@ class YouTubeAPI:
             entities = (msg.entities or []) + (msg.caption_entities or [])
             for e in entities:
                 if e.type == MessageEntityType.URL:
-                    return text[e.offset: e.offset + e.length]
+                    return text[e.offset : e.offset + e.length]
                 if e.type == MessageEntityType.TEXT_LINK:
                     return e.url
         return None
@@ -81,7 +80,6 @@ class YouTubeAPI:
     # -------------------------
     async def track(self, link: str, videoid=None):
         title, dur, _, thumb, vid = await self.details(link, videoid)
-
         return {
             "title": title,
             "link": self.base + vid,
@@ -98,7 +96,7 @@ class YouTubeAPI:
         return []
 
     # ===============================
-    # 🔥 MAIN STREAM FETCHER
+    # 🔥 MAIN STREAM FETCHER (LAZY)
     # ===============================
     async def download(
         self,
@@ -111,34 +109,14 @@ class YouTubeAPI:
 
         # build full youtube link
         link = self.base + link if videoid else link
+
+        # 🔥 IMPORTANT
+        # ❌ NO API CALL HERE
+        # ❌ NO DOWNLOAD HERE
+        # ✅ JUST RETURN STREAM URL
+
         api = VIDEO_API if video else AUDIO_API
+        stream_url = f"{api}?url={link}"
 
-        try:
-            timeout = aiohttp.ClientTimeout(total=12)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(
-                    api,
-                    params={"url": link},
-                ) as resp:
-
-                    if resp.status != 200:
-                        return None, False
-
-                    data = await resp.json()
-
-                    # ---- AUDIO ----
-                    if not video:
-                        stream = data.get("audio")
-                        if not stream:
-                            return None, False
-                        return stream, False
-
-                    # ---- VIDEO ----
-                    stream = data.get("video")
-                    if not stream:
-                        return None, False
-
-                    return stream, False
-
-        except Exception:
-            return None, False
+        # second value = direct (False is correct)
+        return stream_url, False 
