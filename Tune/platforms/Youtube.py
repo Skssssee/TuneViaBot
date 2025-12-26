@@ -1,6 +1,8 @@
+
 # ===============================
 # TuneViaBot - YouTube Platform
-# API STREAM BASED (NO DOWNLOAD)
+# STREAM ONLY (NO DOWNLOAD)
+# AUDIO + VIDEO (360p)
 # ===============================
 
 import re
@@ -18,9 +20,11 @@ except ImportError:
     from youtubesearchpython import VideosSearch
 
 
-# 🔥 YOUR YT STREAM API
+# ===============================
+# YOUR APIs
+# ===============================
 AUDIO_API = "http://152.42.187.207:8000/audio"
-VIDEO_API = "http://152.42.187.207:8000/vedio"
+VIDEO_API = "http://152.42.187.207:8000/video"
 
 
 # ===============================
@@ -79,7 +83,6 @@ class YouTubeAPI:
     # -------------------------
     async def track(self, link: str, videoid=None):
         title, dur, _, thumb, vid = await self.details(link, videoid)
-
         return {
             "title": title,
             "link": self.base + vid,
@@ -89,16 +92,15 @@ class YouTubeAPI:
         }, vid
 
     # -------------------------
-    async def video(self, link: str, videoid=None):
-        # Live / direct video not supported here
-        return 0, "Video stream via API only"
-
-    # -------------------------
     async def playlist(self, *args, **kwargs):
         return []
 
+    # -------------------------
+    async def video(self, *args, **kwargs):
+        return 0, "Live not supported"
+
     # ===============================
-    # 🔥 MAIN DOWNLOAD / STREAM LOGIC
+    # 🔥 MAIN FUNCTION USED BY BOT
     # ===============================
     async def download(
         self,
@@ -111,6 +113,7 @@ class YouTubeAPI:
 
         link = self.base + link if videoid else link
         vid = extract_video_id(link)
+        yt_url = f"https://youtu.be/{vid}"
 
         api = VIDEO_API if video else AUDIO_API
 
@@ -118,8 +121,8 @@ class YouTubeAPI:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
                     api,
-                    params={"url": vid},
-                    timeout=aiohttp.ClientTimeout(total=12),
+                    params={"url": yt_url},
+                    timeout=aiohttp.ClientTimeout(total=15),
                 ) as r:
 
                     if r.status != 200:
@@ -127,18 +130,12 @@ class YouTubeAPI:
 
                     data = await r.json()
 
-                    # AUDIO
-                    if not video:
-                        stream_url = data.get("audio")
-                    # VIDEO
-                    else:
-                        stream_url = data.get("video")
-
+                    stream_url = data.get("video") if video else data.get("audio")
                     if not stream_url:
                         return None, False
 
-                    # 🔥 IMPORTANT
-                    # direct=False → pytgcalls will stream URL
+                    # 🔥 DIRECT STREAM URL
+                    # False = NOT LOCAL FILE
                     return stream_url, False
 
         except Exception:
