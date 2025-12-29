@@ -1,5 +1,6 @@
+
 # Authored By Certified Coders © 2025
-# YouTube Platform – FINAL STABLE (stdout+stderr fix)
+# YouTube Platform – FINAL FINAL (NO quiet bug)
 
 import asyncio
 import contextlib
@@ -54,7 +55,6 @@ class YouTubeAPI:
         self.base = "https://www.youtube.com/watch?v="
         self._url_re = re.compile(r"(youtube\.com|youtu\.be)")
 
-    # ---------------------
     def _prepare_link(self, link: str, videoid: Union[str, bool, None] = None) -> str:
         if isinstance(videoid, str) and videoid:
             return self.base + videoid
@@ -67,13 +67,11 @@ class YouTubeAPI:
         if "youtube.com" in link:
             return link.split("&")[0]
 
-        return link  # text query
+        return link
 
-    # ---------------------
     async def exists(self, link: str, videoid=None) -> bool:
         return bool(self._url_re.search(self._prepare_link(link, videoid)))
 
-    # ---------------------
     async def url(self, message: Message) -> Optional[str]:
         msgs = [message]
         if message.reply_to_message:
@@ -90,18 +88,14 @@ class YouTubeAPI:
         return None
 
     # =====================
-    # TRACK (FINAL FIX)
+    # TRACK (REAL FIX)
     # =====================
     @capture_internal_err
-    async def track(
-        self,
-        link: str,
-        videoid: Union[str, bool, None] = None,
-    ):
+    async def track(self, link: str, videoid=None):
         prepared = self._prepare_link(link, videoid)
         now = time.time()
 
-        # ---------- CACHE ----------
+        # CACHE
         if prepared in _STREAM_CACHE:
             url, ts = _STREAM_CACHE[prepared]
             if now - ts < _CACHE_TTL:
@@ -113,12 +107,9 @@ class YouTubeAPI:
                     "thumb": "",
                 }, None
 
-        # ---------- yt-dlp ----------
         cmd = [
             "yt-dlp",
             "--no-playlist",
-            "--quiet",
-            "--no-warnings",
             "--cookies", COOKIE_FILE,
             "--user-agent", "Mozilla/5.0 (Linux; Android 13; Pixel 7)",
             "--extractor-args", "youtube:player_client=android",
@@ -129,13 +120,17 @@ class YouTubeAPI:
 
         stdout, stderr = await _exec_proc(*cmd)
 
-        # 🔥 IMPORTANT FIX: read BOTH stdout + stderr
-        output = (stdout + stderr).decode(errors="ignore").strip()
+        combined = (stdout + stderr).decode(errors="ignore")
 
-        if not output:
-            raise ValueError("yt-dlp returned no stream URL")
+        # 🔥 Extract first valid URL
+        stream_url = None
+        for line in combined.splitlines():
+            if line.startswith("http"):
+                stream_url = line.strip()
+                break
 
-        stream_url = output.splitlines()[0]
+        if not stream_url:
+            raise ValueError(f"yt-dlp output:\n{combined}")
 
         _STREAM_CACHE[prepared] = (stream_url, now)
 
