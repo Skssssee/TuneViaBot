@@ -1,6 +1,5 @@
-
 # Authored By Certified Coders © 2025
-# YouTube Platform – FIXED TEXT QUERY HANDLING
+# YouTube Platform – FINAL & BULLETPROOF
 
 import asyncio
 import contextlib
@@ -61,31 +60,28 @@ async def _exec_proc(*args: str) -> Tuple[bytes, bytes]:
         return b"", b"timeout"
 
 
+# =========================
+# BULLETPROOF SEARCH
+# =========================
 async def cached_youtube_search(query: str) -> List[Dict]:
-    key = f"q:{query}"
-    now = time.time()
+    search_variants = [
+        f"{query} official audio",
+        f"{query} song",
+        f"{query} arijit singh",
+        f"{query} bollywood",
+        query,
+    ]
 
-    async with _cache_lock:
-        if key in _cache:
-            ts, val = _cache[key]
-            if now - ts < YOUTUBE_META_TTL:
-                return val
-            _cache.pop(key, None)
+    for q in search_variants:
+        try:
+            data = await VideosSearch(q, limit=1).next()
+            result = data.get("result", [])
+            if result:
+                return result
+        except Exception:
+            continue
 
-        if len(_cache) > YOUTUBE_META_MAX:
-            _cache.clear()
-
-    try:
-        data = await VideosSearch(f"{query} official audio", limit=1).next()
-        result = data.get("result", [])
-    except Exception:
-        result = []
-
-    if result:
-        async with _cache_lock:
-            _cache[key] = (now, result)
-
-    return result
+    return []
 
 
 # =========================
@@ -110,7 +106,7 @@ class YouTubeAPI:
         if "youtube.com" in link:
             return link.split("&")[0]
 
-        return link  # text query remains text
+        return link  # text query stays text
 
     # ---------------------
     async def exists(self, link: str, videoid=None) -> bool:
@@ -133,7 +129,7 @@ class YouTubeAPI:
         return None
 
     # =====================
-    # FIXED TRACK FUNCTION
+    # TRACK (FINAL FIX)
     # =====================
     @capture_internal_err
     async def track(
@@ -142,19 +138,17 @@ class YouTubeAPI:
 
         prepared = self._prepare_link(link, videoid)
 
-        # =====================
-        # TEXT QUERY FLOW
-        # =====================
+        # ========= TEXT QUERY =========
         if not prepared.startswith("http"):
             results = await cached_youtube_search(prepared)
             if not results:
-                raise ValueError(f"No YouTube results found for '{prepared}'")
-
+                raise ValueError(
+                    f"No YouTube results found for '{prepared}'. Try a longer name."
+                )
             info = results[0]
+
+        # ========= URL =========
         else:
-            # =====================
-            # URL FLOW
-            # =====================
             try:
                 data = await VideosSearch(prepared, limit=1).next()
                 info = data.get("result", [None])[0]
@@ -166,7 +160,6 @@ class YouTubeAPI:
                 )
                 if not stdout:
                     raise ValueError(stderr.decode() if stderr else "yt-dlp failed")
-
                 info = json.loads(stdout.decode())
 
         thumb = (
@@ -185,7 +178,7 @@ class YouTubeAPI:
         return details, info.get("id", "")
 
     # =====================
-    # STREAM / DOWNLOAD
+    # DOWNLOAD / STREAM
     # =====================
     async def download(
         self,
