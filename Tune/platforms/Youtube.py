@@ -1,5 +1,5 @@
 # Authored By Certified Coders © 2025
-# YouTube Platform – FAST + COOKIE SAFE
+# YouTube Platform – FINAL STABLE (stdout+stderr fix)
 
 import asyncio
 import contextlib
@@ -16,17 +16,14 @@ from Tune.utils.tuning import YTDLP_TIMEOUT
 
 
 # =========================
-# COOKIE PATH (FIXED)
+# PATHS
 # =========================
-COOKIE_FILE = os.path.join(
-    os.path.dirname(os.path.dirname(__file__)),  # Tune/
-    "assets",
-    "cookies.txt",
-)
+BASE_DIR = os.path.dirname(os.path.dirname(__file__))  # Tune/
+COOKIE_FILE = os.path.join(BASE_DIR, "assets", "cookies.txt")
 
 
 # =========================
-# STREAM CACHE
+# CACHE
 # =========================
 _STREAM_CACHE: Dict[str, Tuple[str, float]] = {}
 _CACHE_TTL = 300  # 5 minutes
@@ -46,7 +43,7 @@ async def _exec_proc(*args: str) -> Tuple[bytes, bytes]:
     except asyncio.TimeoutError:
         with contextlib.suppress(Exception):
             proc.kill()
-        return b"", b"timeout"
+        return b"", b""
 
 
 # =========================
@@ -70,7 +67,7 @@ class YouTubeAPI:
         if "youtube.com" in link:
             return link.split("&")[0]
 
-        return link
+        return link  # text query
 
     # ---------------------
     async def exists(self, link: str, videoid=None) -> bool:
@@ -93,7 +90,7 @@ class YouTubeAPI:
         return None
 
     # =====================
-    # FAST TRACK (COOKIE SAFE)
+    # TRACK (FINAL FIX)
     # =====================
     @capture_internal_err
     async def track(
@@ -101,11 +98,10 @@ class YouTubeAPI:
         link: str,
         videoid: Union[str, bool, None] = None,
     ):
-
         prepared = self._prepare_link(link, videoid)
         now = time.time()
 
-        # CACHE HIT
+        # ---------- CACHE ----------
         if prepared in _STREAM_CACHE:
             url, ts = _STREAM_CACHE[prepared]
             if now - ts < _CACHE_TTL:
@@ -117,9 +113,12 @@ class YouTubeAPI:
                     "thumb": "",
                 }, None
 
-        # yt-dlp command (ANTI-BOT SAFE)
+        # ---------- yt-dlp ----------
         cmd = [
             "yt-dlp",
+            "--no-playlist",
+            "--quiet",
+            "--no-warnings",
             "--cookies", COOKIE_FILE,
             "--user-agent", "Mozilla/5.0 (Linux; Android 13; Pixel 7)",
             "--extractor-args", "youtube:player_client=android",
@@ -130,12 +129,13 @@ class YouTubeAPI:
 
         stdout, stderr = await _exec_proc(*cmd)
 
-        if not stdout:
-            raise ValueError(
-                stderr.decode().strip() if stderr else "Failed to fetch stream"
-            )
+        # 🔥 IMPORTANT FIX: read BOTH stdout + stderr
+        output = (stdout + stderr).decode(errors="ignore").strip()
 
-        stream_url = stdout.decode().strip().split("\n")[0]
+        if not output:
+            raise ValueError("yt-dlp returned no stream URL")
+
+        stream_url = output.splitlines()[0]
 
         _STREAM_CACHE[prepared] = (stream_url, now)
 
