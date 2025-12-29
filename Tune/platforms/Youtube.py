@@ -1,32 +1,23 @@
 # Authored By Certified Coders © 2025
-# YouTube Platform – FINAL & BULLETPROOF
+# YouTube Platform – FINAL (yt-dlp search based)
 
 import asyncio
 import contextlib
 import json
 import os
 import re
-import time
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, Optional, Tuple, Union
 
 import yt_dlp
 from pyrogram.enums import MessageEntityType
 from pyrogram.types import Message
-from youtubesearchpython import VideosSearch, Playlist
 
 from Tune.utils.cookie_handler import COOKIE_PATH
 from Tune.utils.database import is_on_off
 from Tune.utils.downloader import yt_dlp_download
 from Tune.utils.errors import capture_internal_err
 from Tune.utils.formatters import time_to_seconds
-from Tune.utils.tuning import YTDLP_TIMEOUT, YOUTUBE_META_MAX, YOUTUBE_META_TTL
-
-
-# =========================
-# CACHES
-# =========================
-_cache: Dict[str, Tuple[float, List[Dict]]] = {}
-_cache_lock = asyncio.Lock()
+from Tune.utils.tuning import YTDLP_TIMEOUT
 
 
 # =========================
@@ -41,7 +32,7 @@ def _cookiefile_path() -> Optional[str]:
     return None
 
 
-def _cookies_args() -> List[str]:
+def _cookies_args():
     p = _cookiefile_path()
     return ["--cookies", p] if p else []
 
@@ -61,36 +52,11 @@ async def _exec_proc(*args: str) -> Tuple[bytes, bytes]:
 
 
 # =========================
-# BULLETPROOF SEARCH
-# =========================
-async def cached_youtube_search(query: str) -> List[Dict]:
-    search_variants = [
-        f"{query} official audio",
-        f"{query} song",
-        f"{query} arijit singh",
-        f"{query} bollywood",
-        query,
-    ]
-
-    for q in search_variants:
-        try:
-            data = await VideosSearch(q, limit=1).next()
-            result = data.get("result", [])
-            if result:
-                return result
-        except Exception:
-            continue
-
-    return []
-
-
-# =========================
 # MAIN CLASS
 # =========================
 class YouTubeAPI:
     def __init__(self):
         self.base = "https://www.youtube.com/watch?v="
-        self.playlist_url = "https://youtube.com/playlist?list="
         self._url_re = re.compile(r"(youtube\.com|youtu\.be)")
 
     # ---------------------
@@ -106,7 +72,7 @@ class YouTubeAPI:
         if "youtube.com" in link:
             return link.split("&")[0]
 
-        return link  # text query stays text
+        return link  # text query remains text
 
     # ---------------------
     async def exists(self, link: str, videoid=None) -> bool:
@@ -129,7 +95,7 @@ class YouTubeAPI:
         return None
 
     # =====================
-    # TRACK (FINAL FIX)
+    # TRACK (yt-dlp SEARCH)
     # =====================
     @capture_internal_err
     async def track(
@@ -140,27 +106,31 @@ class YouTubeAPI:
 
         # ========= TEXT QUERY =========
         if not prepared.startswith("http"):
-            results = await cached_youtube_search(prepared)
-            if not results:
-                raise ValueError(
-                    f"No YouTube results found for '{prepared}'. Try a longer name."
-                )
-            info = results[0]
+            stdout, stderr = await _exec_proc(
+                "yt-dlp",
+                *(_cookies_args()),
+                "--dump-json",
+                f"ytsearch1:{prepared}"
+            )
+
+            if not stdout:
+                raise ValueError(f"No YouTube results found for '{prepared}'")
+
+            info = json.loads(stdout.decode())
 
         # ========= URL =========
         else:
-            try:
-                data = await VideosSearch(prepared, limit=1).next()
-                info = data.get("result", [None])[0]
-                if not info:
-                    raise ValueError("Empty search result")
-            except Exception:
-                stdout, stderr = await _exec_proc(
-                    "yt-dlp", *(_cookies_args()), "--dump-json", prepared
-                )
-                if not stdout:
-                    raise ValueError(stderr.decode() if stderr else "yt-dlp failed")
-                info = json.loads(stdout.decode())
+            stdout, stderr = await _exec_proc(
+                "yt-dlp",
+                *(_cookies_args()),
+                "--dump-json",
+                prepared
+            )
+
+            if not stdout:
+                raise ValueError(stderr.decode() if stderr else "yt-dlp failed")
+
+            info = json.loads(stdout.decode())
 
         thumb = (
             info.get("thumbnail")
@@ -171,14 +141,14 @@ class YouTubeAPI:
             "title": info.get("title", ""),
             "link": info.get("webpage_url", self.base + info.get("id", "")),
             "vidid": info.get("id", ""),
-            "duration_min": info.get("duration"),
+            "duration_min": time_to_seconds(info.get("duration")),
             "thumb": thumb,
         }
 
         return details, info.get("id", "")
 
     # =====================
-    # DOWNLOAD / STREAM
+    # STREAM / DOWNLOAD
     # =====================
     async def download(
         self,
@@ -190,6 +160,7 @@ class YouTubeAPI:
     ):
         prepared = self._prepare_link(link, videoid)
 
+        # VIDEO STREAM
         if video:
             stdout, _ = await _exec_proc(
                 "yt-dlp",
@@ -201,5 +172,6 @@ class YouTubeAPI:
             )
             return (stdout.decode().split("\n")[0], None) if stdout else (None, None)
 
+        # AUDIO DOWNLOAD / STREAM
         p = await yt_dlp_download(prepared, type="audio", title=prepared)
         return (p, True) if p else (None, None)
