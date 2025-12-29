@@ -1,26 +1,31 @@
 
-import re
 import aiohttp
 import hashlib
 from typing import Union, Tuple, Dict
 from pyrogram.types import Message
 from pyrogram.enums import MessageEntityType
 
+# =========================
+# CONFIG
+# =========================
 AUDIO_API = "http://152.42.187.207:8000/audio"
-YT_REGEX = r"(youtube\.com|youtu\.be)"
 
+# =========================
+# MAIN CLASS
+# =========================
 class YouTubeAPI:
     def __init__(self):
         self.base = "https://www.youtube.com/watch?v="
-        self.regex = re.compile(YT_REGEX)
 
-    # -------------------------
+    # -------------------------------------------------
+    # BOT CHECK (MUST ALWAYS TRUE)
+    # -------------------------------------------------
     async def exists(self, link: str, videoid=None):
-        if videoid:
-            link = self.base + videoid
-        return bool(self.regex.search(link))
+        return True
 
-    # -------------------------
+    # -------------------------------------------------
+    # EXTRACT URL FROM MESSAGE
+    # -------------------------------------------------
     async def url(self, message: Message):
         msgs = [message]
         if message.reply_to_message:
@@ -36,102 +41,101 @@ class YouTubeAPI:
                     return e.url
         return None
 
-    # =====================
-    # TRACK (NO FAIL EVER)
-    # =====================
+    # -------------------------------------------------
+    # TRACK (BOT NEEDS THIS)
+    # -------------------------------------------------
     async def track(
         self, link: str, videoid=None
     ) -> Tuple[Dict, str]:
 
-        # -------- TEXT QUERY --------
-        if not self.regex.search(link):
-            fake_id = hashlib.md5(link.encode()).hexdigest()[:11]
-
-            details = {
-                "title": link[:60],
-                "link": link,
-                "vidid": fake_id,
-                "duration_min": "0:00",
-                "thumb": "https://i.imgur.com/8hY5K5R.jpg",
-            }
-            return details, fake_id
-
-        # -------- YOUTUBE URL --------
-        if videoid:
-            link = self.base + videoid
-
-        vidid = link.split("v=")[-1].split("&")[0]
+        if link.startswith("http"):
+            if videoid:
+                link = self.base + videoid
+            vidid = link.split("v=")[-1].split("&")[0]
+        else:
+            # text query safe id
+            vidid = hashlib.md5(link.encode()).hexdigest()[:11]
 
         details = {
-            "title": "YouTube Audio",
+            "title": link[:60],
             "link": link,
             "vidid": vidid,
-            "duration_min": "0:00",
+            "duration_min": "0:00",  # 🔥 NEVER CRASH
             "thumb": f"https://i.ytimg.com/vi/{vidid}/hqdefault.jpg",
         }
 
         return details, vidid
 
-    # =====================
+    # -------------------------------------------------
+    # DETAILS (BOT CALLS THIS TOO)
+    # -------------------------------------------------
     async def details(self, link: str, videoid=None):
-        if not self.regex.search(link):
-            fake_id = hashlib.md5(link.encode()).hexdigest()[:11]
-            return (
-                link[:60],
-                "0:00",
-                0,
-                "https://i.imgur.com/8hY5K5R.jpg",
-                fake_id,
-            )
+        if link.startswith("http"):
+            if videoid:
+                link = self.base + videoid
+            vidid = link.split("v=")[-1].split("&")[0]
+        else:
+            vidid = hashlib.md5(link.encode()).hexdigest()[:11]
 
-        if videoid:
-            link = self.base + videoid
-
-        vidid = link.split("v=")[-1].split("&")[0]
         return (
-            "YouTube Audio",
-            "0:00",
-            0,
+            link[:60],   # title
+            "0:00",      # duration_min
+            0,           # duration_sec
             f"https://i.ytimg.com/vi/{vidid}/hqdefault.jpg",
             vidid,
         )
 
-    # =====================
+    # -------------------------------------------------
     async def title(self, link: str, videoid=None):
-        return link if not self.regex.search(link) else "YouTube Audio"
+        return link[:60]
 
     async def duration(self, link: str, videoid=None):
         return "0:00"
 
     async def thumbnail(self, link: str, videoid=None):
-        if not self.regex.search(link):
-            return "https://i.imgur.com/8hY5K5R.jpg"
-        vidid = link.split("v=")[-1].split("&")[0]
+        vidid = hashlib.md5(link.encode()).hexdigest()[:11]
         return f"https://i.ytimg.com/vi/{vidid}/hqdefault.jpg"
 
-    # =====================
-    # STREAM (VC)
-    # =====================
-    async def stream(self, link: str):
+    # -------------------------------------------------
+    # 🔥 MOST IMPORTANT: DOWNLOAD (API HIT HERE)
+    # -------------------------------------------------
+    async def download(
+        self,
+        link: str,
+        mystic,
+        *,
+        video: bool = False,
+        videoid=None,
+        songaudio: bool = False,
+        songvideo: bool = False,
+        format_id=None,
+        title=None,
+    ):
+        """
+        TuneViaBot expects:
+        return (url_or_path, is_stream)
+        """
+
         async with aiohttp.ClientSession() as session:
             async with session.get(
                 AUDIO_API,
                 params={"url": link},
-                timeout=20
+                timeout=25
             ) as resp:
 
                 if resp.status != 200:
-                    return 0, "API error"
+                    return None, None
 
                 data = await resp.json()
                 if data.get("status") != "success":
-                    return 0, data.get("error", "Failed")
+                    return None, None
 
-                return 1, data["audio"]
+                # ✅ DIRECT STREAM URL
+                return data["audio"], True
 
-    # =====================
+    # -------------------------------------------------
     async def video(self, link: str, videoid=None):
-        return await self.stream(link)
+        return await self.download(link, None)
 
     async def playlist(self, link, limit, user_id, videoid=None):
         return []
@@ -140,10 +144,10 @@ class YouTubeAPI:
         return [], link
 
     async def slider(self, link: str, query_type: int, videoid=None):
-        fake_id = hashlib.md5(link.encode()).hexdigest()[:11]
+        vidid = hashlib.md5(link.encode()).hexdigest()[:11]
         return (
             link[:60],
             "0:00",
-            "https://i.imgur.com/8hY5K5R.jpg",
-            fake_id,
-    )
+            f"https://i.ytimg.com/vi/{vidid}/hqdefault.jpg",
+            vidid,
+        )
