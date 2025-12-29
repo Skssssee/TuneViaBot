@@ -20,7 +20,7 @@ from Tune.utils.tuning import YTDLP_TIMEOUT
 # =========================
 COOKIE_FILE = os.path.join(
     os.path.dirname(os.path.dirname(__file__)),  # Tune/
-    "cookies",
+    "assets",
     "cookies.txt",
 )
 
