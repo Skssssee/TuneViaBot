@@ -1,6 +1,5 @@
-
 # Authored By Certified Coders © 2025
-# YouTube Platform – FASTEST (Direct yt-dlp stream + cache)
+# YouTube Platform – FAST + COOKIE SAFE
 
 import asyncio
 import contextlib
@@ -17,7 +16,17 @@ from Tune.utils.tuning import YTDLP_TIMEOUT
 
 
 # =========================
-# SIMPLE STREAM CACHE
+# COOKIE PATH (FIXED)
+# =========================
+COOKIE_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(__file__)),  # Tune/
+    "cookies",
+    "cookies.txt",
+)
+
+
+# =========================
+# STREAM CACHE
 # =========================
 _STREAM_CACHE: Dict[str, Tuple[str, float]] = {}
 _CACHE_TTL = 300  # 5 minutes
@@ -61,7 +70,7 @@ class YouTubeAPI:
         if "youtube.com" in link:
             return link.split("&")[0]
 
-        return link  # text query
+        return link
 
     # ---------------------
     async def exists(self, link: str, videoid=None) -> bool:
@@ -84,7 +93,7 @@ class YouTubeAPI:
         return None
 
     # =====================
-    # FAST TRACK (CORE)
+    # FAST TRACK (COOKIE SAFE)
     # =====================
     @capture_internal_err
     async def track(
@@ -96,9 +105,7 @@ class YouTubeAPI:
         prepared = self._prepare_link(link, videoid)
         now = time.time()
 
-        # =====================
         # CACHE HIT
-        # =====================
         if prepared in _STREAM_CACHE:
             url, ts = _STREAM_CACHE[prepared]
             if now - ts < _CACHE_TTL:
@@ -110,26 +117,16 @@ class YouTubeAPI:
                     "thumb": "",
                 }, None
 
-        # =====================
-        # TEXT QUERY → ytsearch (FAST)
-        # =====================
-        if not prepared.startswith("http"):
-            cmd = [
-                "yt-dlp",
-                "-f", "bestaudio",
-                "-g",
-                f"ytsearch1:{prepared}"
-            ]
-        else:
-            # =====================
-            # URL CASE
-            # =====================
-            cmd = [
-                "yt-dlp",
-                "-f", "bestaudio",
-                "-g",
-                prepared
-            ]
+        # yt-dlp command (ANTI-BOT SAFE)
+        cmd = [
+            "yt-dlp",
+            "--cookies", COOKIE_FILE,
+            "--user-agent", "Mozilla/5.0 (Linux; Android 13; Pixel 7)",
+            "--extractor-args", "youtube:player_client=android",
+            "-f", "bestaudio",
+            "-g",
+            f"ytsearch1:{prepared}" if not prepared.startswith("http") else prepared,
+        ]
 
         stdout, stderr = await _exec_proc(*cmd)
 
@@ -140,45 +137,12 @@ class YouTubeAPI:
 
         stream_url = stdout.decode().strip().split("\n")[0]
 
-        # SAVE CACHE
         _STREAM_CACHE[prepared] = (stream_url, now)
 
-        details = {
+        return {
             "title": prepared,
             "link": stream_url,
             "vidid": None,
             "duration_min": None,
             "thumb": "",
-        }
-
-        return details, None
-
-    # =====================
-    # DOWNLOAD / STREAM
-    # =====================
-    async def download(
-        self,
-        link: str,
-        mystic,
-        *,
-        video: Union[bool, str, None] = None,
-        videoid: Union[str, bool, None] = None,
-    ):
-        prepared = self._prepare_link(link, videoid)
-
-        if video:
-            stdout, _ = await _exec_proc(
-                "yt-dlp",
-                "-f", "best[height<=720]",
-                "-g",
-                prepared,
-            )
-            return (stdout.decode().split("\n")[0], None) if stdout else (None, None)
-
-        stdout, _ = await _exec_proc(
-            "yt-dlp",
-            "-f", "bestaudio",
-            "-g",
-            prepared,
-        )
-        return (stdout.decode().split("\n")[0], None) if stdout else (None, None)
+        }, None
