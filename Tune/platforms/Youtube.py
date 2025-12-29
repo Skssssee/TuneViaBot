@@ -1,7 +1,6 @@
-
 import aiohttp
 import hashlib
-from typing import Union, Tuple, Dict
+from typing import Dict, Tuple, Union
 from pyrogram.types import Message
 from pyrogram.enums import MessageEntityType
 
@@ -17,15 +16,13 @@ class YouTubeAPI:
     def __init__(self):
         self.base = "https://www.youtube.com/watch?v="
 
-    # -------------------------------------------------
-    # BOT CHECK (MUST ALWAYS TRUE)
-    # -------------------------------------------------
-    async def exists(self, link: str, videoid=None):
+    # ---------------------
+    # MUST ALWAYS TRUE
+    # ---------------------
+    async def exists(self, link: str, videoid=None) -> bool:
         return True
 
-    # -------------------------------------------------
-    # EXTRACT URL FROM MESSAGE
-    # -------------------------------------------------
+    # ---------------------
     async def url(self, message: Message):
         msgs = [message]
         if message.reply_to_message:
@@ -41,11 +38,11 @@ class YouTubeAPI:
                     return e.url
         return None
 
-    # -------------------------------------------------
-    # TRACK (BOT NEEDS THIS)
-    # -------------------------------------------------
+    # =====================
+    # TRACK (🔥 NEVER FAIL)
+    # =====================
     async def track(
-        self, link: str, videoid=None
+        self, link: str, videoid: Union[str, bool, None] = None
     ) -> Tuple[Dict, str]:
 
         if link.startswith("http"):
@@ -53,22 +50,20 @@ class YouTubeAPI:
                 link = self.base + videoid
             vidid = link.split("v=")[-1].split("&")[0]
         else:
-            # text query safe id
+            # text query → fake safe id
             vidid = hashlib.md5(link.encode()).hexdigest()[:11]
 
         details = {
             "title": link[:60],
             "link": link,
             "vidid": vidid,
-            "duration_min": "0:00",  # 🔥 NEVER CRASH
+            "duration_min": "0:00",   # 🔥 SAFE
             "thumb": f"https://i.ytimg.com/vi/{vidid}/hqdefault.jpg",
         }
 
         return details, vidid
 
-    # -------------------------------------------------
-    # DETAILS (BOT CALLS THIS TOO)
-    # -------------------------------------------------
+    # =====================
     async def details(self, link: str, videoid=None):
         if link.startswith("http"):
             if videoid:
@@ -78,14 +73,13 @@ class YouTubeAPI:
             vidid = hashlib.md5(link.encode()).hexdigest()[:11]
 
         return (
-            link[:60],   # title
-            "0:00",      # duration_min
-            0,           # duration_sec
+            link[:60],
+            "0:00",
+            0,
             f"https://i.ytimg.com/vi/{vidid}/hqdefault.jpg",
             vidid,
         )
 
-    # -------------------------------------------------
     async def title(self, link: str, videoid=None):
         return link[:60]
 
@@ -96,31 +90,23 @@ class YouTubeAPI:
         vidid = hashlib.md5(link.encode()).hexdigest()[:11]
         return f"https://i.ytimg.com/vi/{vidid}/hqdefault.jpg"
 
-    # -------------------------------------------------
-    # 🔥 MOST IMPORTANT: DOWNLOAD (API HIT HERE)
-    # -------------------------------------------------
+    # =====================
+    # 🔥 DOWNLOAD = API HIT
+    # =====================
     async def download(
         self,
         link: str,
         mystic,
         *,
-        video: bool = False,
-        videoid=None,
-        songaudio: bool = False,
-        songvideo: bool = False,
-        format_id=None,
-        title=None,
+        video: Union[bool, str, None] = None,
+        videoid: Union[str, bool, None] = None,
+        **kwargs
     ):
-        """
-        TuneViaBot expects:
-        return (url_or_path, is_stream)
-        """
-
         async with aiohttp.ClientSession() as session:
             async with session.get(
                 AUDIO_API,
                 params={"url": link},
-                timeout=25
+                timeout=30
             ) as resp:
 
                 if resp.status != 200:
@@ -130,10 +116,10 @@ class YouTubeAPI:
                 if data.get("status") != "success":
                     return None, None
 
-                # ✅ DIRECT STREAM URL
+                # ✅ DIRECT GOOGLEVIDEO URL
                 return data["audio"], True
 
-    # -------------------------------------------------
+    # =====================
     async def video(self, link: str, videoid=None):
         return await self.download(link, None)
 
@@ -150,4 +136,4 @@ class YouTubeAPI:
             "0:00",
             f"https://i.ytimg.com/vi/{vidid}/hqdefault.jpg",
             vidid,
-        )
+                    )
