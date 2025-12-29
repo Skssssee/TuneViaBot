@@ -1,11 +1,10 @@
+
 import re
 import aiohttp
-from typing import Union, Tuple
+from typing import Union, Tuple, Dict
 from pyrogram.types import Message
 from pyrogram.enums import MessageEntityType
-from Tune.utils.database import is_on_off
-from Tune.utils.errors import capture_internal_err
-from Tune.utils.formatters import time_to_seconds
+
 # =========================
 # CONFIG
 # =========================
@@ -14,7 +13,7 @@ AUDIO_API = "http://152.42.187.207:8000/audio"
 YT_REGEX = r"(youtube\.com|youtu\.be)"
 
 # =========================
-# YOUTUBE API CLASS
+# MAIN CLASS
 # =========================
 
 class YouTubeAPI:
@@ -23,97 +22,80 @@ class YouTubeAPI:
         self.regex = re.compile(YT_REGEX)
 
     # -------------------------
-    # CHECK YOUTUBE LINK
-    # -------------------------
-    async def exists(self, link: str, videoid: Union[bool, str] = None):
+    async def exists(self, link: str, videoid: Union[str, bool, None] = None):
         if videoid:
-            link = self.base + link
+            link = self.base + videoid
         return bool(self.regex.search(link))
 
     # -------------------------
-    # EXTRACT URL FROM MESSAGE
-    # -------------------------
-    async def url(self, message: Message) -> Union[str, None]:
-        messages = [message]
+    async def url(self, message: Message):
+        msgs = [message]
         if message.reply_to_message:
-            messages.append(message.reply_to_message)
+            msgs.append(message.reply_to_message)
 
-        for msg in messages:
-            text = msg.text or msg.caption
-            entities = msg.entities or msg.caption_entities or []
-            for ent in entities:
-                if ent.type == MessageEntityType.URL:
-                    return text[ent.offset: ent.offset + ent.length]
-                if ent.type == MessageEntityType.TEXT_LINK:
-                    return ent.url
+        for msg in msgs:
+            text = msg.text or msg.caption or ""
+            entities = (msg.entities or []) + (msg.caption_entities or [])
+            for e in entities:
+                if e.type == MessageEntityType.URL:
+                    return text[e.offset : e.offset + e.length]
+                if e.type == MessageEntityType.TEXT_LINK:
+                    return e.url
         return None
 
-    # -------------------------
-    # BASIC DETAILS (BOT NEEDS)
-    # -------------------------
-    async def details(
-        self,
-        link: str,
-        videoid: Union[bool, str] = None
-    ) -> Tuple[str, str, int, str, str]:
-
-        if videoid:
-            link = self.base + link
-
-        vidid = link.split("v=")[-1].split("&")[0]
-
-        title = "YouTube Audio"
-        duration_min = "Unknown"
-        duration_sec = 0
-        thumb = f"https://i.ytimg.com/vi/{vidid}/hqdefault.jpg"
-
-        return title, duration_min, duration_sec, thumb, vidid
-
-    # -------------------------
+    # =====================
     # TRACK (MOST IMPORTANT)
-    # -------------------------
-    async def track(self, link: str, videoid: Union[bool, str] = None):
+    # =====================
+    async def track(
+        self, link: str, videoid: Union[str, bool, None] = None
+    ) -> Tuple[Dict, str]:
+
         if videoid:
-            link = self.base + link
+            link = self.base + videoid
 
         vidid = link.split("v=")[-1].split("&")[0]
 
-        track_details = {
+        details = {
             "title": "YouTube Audio",
             "link": link,
             "vidid": vidid,
-            "duration_min": "Unknown",
+            "duration_min": "0:00",   # 🔥 NEVER CRASH
             "thumb": f"https://i.ytimg.com/vi/{vidid}/hqdefault.jpg",
         }
 
-        return track_details, vidid
+        return details, vidid
 
-    # -------------------------
-    # TITLE ONLY
-    # -------------------------
-    async def title(self, link: str, videoid: Union[bool, str] = None):
+    # =====================
+    async def details(
+        self, link: str, videoid: Union[str, bool, None] = None
+    ):
         if videoid:
-            link = self.base + link
+            link = self.base + videoid
+
+        vidid = link.split("v=")[-1].split("&")[0]
+
+        return (
+            "YouTube Audio",
+            "0:00",      # duration_min
+            0,           # duration_sec
+            f"https://i.ytimg.com/vi/{vidid}/hqdefault.jpg",
+            vidid,
+        )
+
+    # =====================
+    async def title(self, link: str, videoid=None):
         return "YouTube Audio"
 
-    # -------------------------
-    # DURATION ONLY
-    # -------------------------
-    async def duration(self, link: str, videoid: Union[bool, str] = None):
-        return "Unknown"
+    async def duration(self, link: str, videoid=None):
+        return "0:00"
 
-    # -------------------------
-    # THUMBNAIL ONLY
-    # -------------------------
-    async def thumbnail(self, link: str, videoid: Union[bool, str] = None):
-        if videoid:
-            link = self.base + link
+    async def thumbnail(self, link: str, videoid=None):
         vidid = link.split("v=")[-1].split("&")[0]
         return f"https://i.ytimg.com/vi/{vidid}/hqdefault.jpg"
 
-    # -------------------------
-    # STREAM AUDIO (VC)
-    # -------------------------
+    # =====================
+    # STREAM (VC)
+    # =====================
     async def stream(self, link: str):
         async with aiohttp.ClientSession() as session:
             async with session.get(
@@ -126,36 +108,26 @@ class YouTubeAPI:
                     return 0, f"API HTTP {resp.status}"
 
                 data = await resp.json()
-
                 if data.get("status") != "success":
-                    return 0, data.get("error", "Failed to fetch audio")
+                    return 0, data.get("error", "API failed")
 
-                # direct googlevideo URL
                 return 1, data["audio"]
 
-    # -------------------------
-    # VIDEO (BOT EXPECTS METHOD)
-    # -------------------------
-    async def video(self, link: str, videoid: Union[bool, str] = None):
-        # audio-only bot, so reuse stream
+    # =====================
+    async def video(self, link: str, videoid=None):
         return await self.stream(link)
 
-    # -------------------------
-    # PLAYLIST (SAFE EMPTY)
-    # -------------------------
-    async def playlist(self, link, limit, user_id, videoid: Union[bool, str] = None):
+    async def playlist(self, link, limit, user_id, videoid=None):
         return []
 
-    # -------------------------
-    # FORMATS (NOT USED)
-    # -------------------------
-    async def formats(self, link: str, videoid: Union[bool, str] = None):
+    async def formats(self, link: str, videoid=None):
         return [], link
 
-    # -------------------------
-    # SLIDER (SEARCH FALLBACK)
-    # -------------------------
-    async def slider(self, link: str, query_type: int, videoid: Union[bool, str] = None):
+    async def slider(self, link: str, query_type: int, videoid=None):
         vidid = link.split("v=")[-1].split("&")[0]
-        thumb = f"https://i.ytimg.com/vi/{vidid}/hqdefault.jpg"
-        return "YouTube Audio", "Unknown", thumb, vidid
+        return (
+            "YouTube Audio",
+            "0:00",
+            f"https://i.ytimg.com/vi/{vidid}/hqdefault.jpg",
+            vidid,
+        )
