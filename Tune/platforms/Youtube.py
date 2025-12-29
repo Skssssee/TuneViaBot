@@ -1,34 +1,31 @@
 # Authored By Certified Coders © 2025
-# FINAL FIX: ALWAYS SEND REAL YOUTUBE URL TO API
+# FINAL STABLE YOUTUBE PLATFORM (API-FIRST)
 
 import asyncio
 import contextlib
-import json
 import os
 import re
 import time
 import aiohttp
 from typing import Dict, List, Optional, Tuple, Union
 
-import yt_dlp
 from pyrogram.enums import MessageEntityType
 from pyrogram.types import Message
 from youtubesearchpython import VideosSearch, Playlist
 
 from Tune.utils.cookie_handler import COOKIE_PATH
-from Tune.utils.database import is_on_off
-from Tune.utils.downloader import yt_dlp_download
 from Tune.utils.errors import capture_internal_err
 from Tune.utils.formatters import time_to_seconds
-from Tune.utils.tuning import YTDLP_TIMEOUT, YOUTUBE_META_MAX, YOUTUBE_META_TTL
+from Tune.utils.tuning import YTDLP_TIMEOUT, YOUTUBE_META_TTL
 
 # =========================
 # CONFIG
 # =========================
 AUDIO_API = "http://152.42.187.207:8000/audio"
+YOUTUBE_BASE = "https://www.youtube.com/watch?v="
 
 # =========================
-# CACHES
+# CACHE
 # =========================
 _cache: Dict[str, Tuple[float, List[Dict]]] = {}
 _cache_lock = asyncio.Lock()
@@ -36,34 +33,6 @@ _cache_lock = asyncio.Lock()
 # =========================
 # HELPERS
 # =========================
-def _cookiefile_path() -> Optional[str]:
-    try:
-        if COOKIE_PATH and os.path.exists(COOKIE_PATH) and os.path.getsize(COOKIE_PATH) > 0:
-            return str(COOKIE_PATH)
-    except Exception:
-        pass
-    return None
-
-
-def _cookies_args() -> List[str]:
-    p = _cookiefile_path()
-    return ["--cookies", p] if p else []
-
-
-async def _exec_proc(*args: str) -> Tuple[bytes, bytes]:
-    proc = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    try:
-        return await asyncio.wait_for(proc.communicate(), timeout=YTDLP_TIMEOUT)
-    except asyncio.TimeoutError:
-        with contextlib.suppress(Exception):
-            proc.kill()
-        return b"", b"timeout"
-
-
 @capture_internal_err
 async def cached_youtube_search(query: str) -> List[Dict]:
     key = f"q:{query}"
@@ -71,9 +40,9 @@ async def cached_youtube_search(query: str) -> List[Dict]:
 
     async with _cache_lock:
         if key in _cache:
-            ts, val = _cache[key]
+            ts, data = _cache[key]
             if now - ts < YOUTUBE_META_TTL:
-                return val
+                return data
             _cache.pop(key, None)
 
     try:
@@ -94,11 +63,11 @@ async def cached_youtube_search(query: str) -> List[Dict]:
 # =========================
 class YouTubeAPI:
     def __init__(self) -> None:
-        self.base = "https://www.youtube.com/watch?v="
+        self.base = YOUTUBE_BASE
         self._url_re = re.compile(r"(youtube\.com|youtu\.be)")
 
-    # ---------------------
-    def _prepare_link(self, link: str, videoid: Union[str, bool, None] = None) -> str:
+    # =====================
+    def _prepare_link(self, link: str, videoid=None) -> str:
         if isinstance(videoid, str) and videoid:
             return self.base + videoid
 
@@ -113,14 +82,10 @@ class YouTubeAPI:
         return link
 
     # =====================
-    # NEVER BLOCK BOT FLOW
-    # =====================
-    @capture_internal_err
     async def exists(self, link: str, videoid=None) -> bool:
         return True
 
     # =====================
-    @capture_internal_err
     async def url(self, message: Message) -> Optional[str]:
         msgs = [message]
         if message.reply_to_message:
@@ -143,22 +108,19 @@ class YouTubeAPI:
     async def track(self, link: str, videoid=None) -> Tuple[Dict, str]:
         prepared = self._prepare_link(link, videoid)
 
-        info = None
+        # CASE 1: REAL URL
         if prepared.startswith("http"):
-            try:
-                data = await VideosSearch(prepared, limit=1).next()
-                info = data.get("result", [None])[0]
-            except Exception:
-                info = None
+            vidid = prepared.split("v=")[-1].split("&")[0]
         else:
+            # CASE 2: SEARCH QUERY
             res = await cached_youtube_search(prepared)
-            info = res[0] if res else None
+            if not res:
+                raise ValueError("No YouTube results found")
+            vidid = res[0]["id"]
 
-        if not info:
-            raise ValueError("No YouTube results found")
-
-        vidid = info.get("id")
-        real_url = self.base + vidid
+        # METADATA (LIGHT)
+        meta = await cached_youtube_search(vidid)
+        info = meta[0] if meta else {}
 
         thumb = (
             info.get("thumbnail")
@@ -166,8 +128,8 @@ class YouTubeAPI:
         ).split("?")[0]
 
         details = {
-            "title": info.get("title", ""),
-            "link": real_url,              # 🔥 REAL URL ONLY
+            "title": info.get("title", "Unknown"),
+            "link": self.base + vidid,
             "vidid": vidid,
             "duration_min": info.get("duration") or "0:00",
             "thumb": thumb,
@@ -176,7 +138,6 @@ class YouTubeAPI:
         return details, vidid
 
     # =====================
-    @capture_internal_err
     async def details(self, link: str, videoid=None):
         details, vidid = await self.track(link, videoid)
         sec = int(time_to_seconds(details["duration_min"]))
@@ -198,7 +159,7 @@ class YouTubeAPI:
         return (await self.track(link, videoid))[0]["thumb"]
 
     # =====================
-    # DOWNLOAD = API HIT (REAL URL)
+    # DOWNLOAD (API HIT)
     # =====================
     @capture_internal_err
     async def download(
@@ -209,7 +170,6 @@ class YouTubeAPI:
         video: Union[bool, str, None] = None,
         videoid: Union[str, bool, None] = None,
     ):
-        # 🔥 ENSURE REAL YOUTUBE URL
         if not link.startswith("http"):
             link = self.base + link
 
@@ -217,18 +177,20 @@ class YouTubeAPI:
             async with session.get(
                 AUDIO_API,
                 params={"url": link},
-                timeout=30
+                timeout=40
             ) as r:
                 if r.status != 200:
-                    print("API FAIL:", r.status, link)
+                    print("❌ AUDIO API STATUS:", r.status)
                     return None, None
 
                 data = await r.json()
-                if data.get("status") != "success":
-                    print("API ERROR:", data)
+
+                if not data.get("success"):
+                    print("❌ AUDIO API ERROR:", data)
                     return None, None
 
-                return data["audio"], True
+                # ✅ RETURN FILE PATH
+                return data["file"], True
 
     # =====================
     async def video(self, link: str, videoid=None):
@@ -236,7 +198,7 @@ class YouTubeAPI:
 
     async def playlist(self, link, limit, user_id, videoid=None):
         try:
-            plist = await Playlist.get(link)
+            plist = Playlist.get(link)
             return [v["id"] for v in plist.get("videos", [])[:limit]]
         except Exception:
             return []
