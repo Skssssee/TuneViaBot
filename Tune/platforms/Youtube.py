@@ -1,27 +1,22 @@
 
 # Authored By Certified Coders © 2025
-# YouTube Platform – FINAL FINAL (NO quiet bug)
+# YouTube Platform – API Based (NO yt-dlp | NO cookies)
 
-import asyncio
-import contextlib
-import os
-import re
 import time
+import re
+import aiohttp
 from typing import Dict, Optional, Tuple, Union
 
 from pyrogram.enums import MessageEntityType
 from pyrogram.types import Message
 
 from Tune.utils.errors import capture_internal_err
-from Tune.utils.tuning import YTDLP_TIMEOUT
 
 
 # =========================
-# PATHS
+# CONFIG
 # =========================
-BASE_DIR = os.path.dirname(os.path.dirname(__file__))  # Tune/
-COOKIE_FILE = os.path.join(BASE_DIR, "assets", "cookies.txt")
-
+AUDIO_API = "http://152.42.187.207:8000/audio"
 
 # =========================
 # CACHE
@@ -30,47 +25,12 @@ _STREAM_CACHE: Dict[str, Tuple[str, float]] = {}
 _CACHE_TTL = 300  # 5 minutes
 
 
-# =========================
-# PROCESS RUNNER
-# =========================
-async def _exec_proc(*args: str) -> Tuple[bytes, bytes]:
-    proc = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    try:
-        return await asyncio.wait_for(proc.communicate(), timeout=YTDLP_TIMEOUT)
-    except asyncio.TimeoutError:
-        with contextlib.suppress(Exception):
-            proc.kill()
-        return b"", b""
-
-
-# =========================
-# MAIN CLASS
-# =========================
 class YouTubeAPI:
     def __init__(self):
-        self.base = "https://www.youtube.com/watch?v="
         self._url_re = re.compile(r"(youtube\.com|youtu\.be)")
 
-    def _prepare_link(self, link: str, videoid: Union[str, bool, None] = None) -> str:
-        if isinstance(videoid, str) and videoid:
-            return self.base + videoid
-
-        link = link.strip()
-
-        if "youtu.be/" in link:
-            return self.base + link.split("/")[-1].split("?")[0]
-
-        if "youtube.com" in link:
-            return link.split("&")[0]
-
-        return link
-
     async def exists(self, link: str, videoid=None) -> bool:
-        return bool(self._url_re.search(self._prepare_link(link, videoid)))
+        return bool(self._url_re.search(link))
 
     async def url(self, message: Message) -> Optional[str]:
         msgs = [message]
@@ -88,54 +48,47 @@ class YouTubeAPI:
         return None
 
     # =====================
-    # TRACK (REAL FIX)
+    # TRACK (API BASED)
     # =====================
     @capture_internal_err
     async def track(self, link: str, videoid=None):
-        prepared = self._prepare_link(link, videoid)
         now = time.time()
 
         # CACHE
-        if prepared in _STREAM_CACHE:
-            url, ts = _STREAM_CACHE[prepared]
+        if link in _STREAM_CACHE:
+            url, ts = _STREAM_CACHE[link]
             if now - ts < _CACHE_TTL:
                 return {
-                    "title": prepared,
+                    "title": link,
                     "link": url,
                     "vidid": None,
                     "duration_min": None,
                     "thumb": "",
                 }, None
 
-        cmd = [
-            "yt-dlp",
-            "--no-playlist",
-            "--cookies", COOKIE_FILE,
-            "--user-agent", "Mozilla/5.0 (Linux; Android 13; Pixel 7)",
-            "--extractor-args", "youtube:player_client=android",
-            "-f", "bestaudio",
-            "-g",
-            f"ytsearch1:{prepared}" if not prepared.startswith("http") else prepared,
-        ]
+        # API CALL
+        async with aiohttp.ClientSession() as session:
+            async with session.get(AUDIO_API, params={"url": link}) as resp:
+                if resp.status != 200:
+                    raise ValueError(f"API failed with {resp.status}")
 
-        stdout, stderr = await _exec_proc(*cmd)
+                data = await resp.json()
 
-        combined = (stdout + stderr).decode(errors="ignore")
-
-        # 🔥 Extract first valid URL
-        stream_url = None
-        for line in combined.splitlines():
-            if line.startswith("http"):
-                stream_url = line.strip()
-                break
+        # FLEXIBLE RESPONSE HANDLING
+        stream_url = (
+            data.get("audio")
+            or data.get("url")
+            or data.get("stream")
+        )
 
         if not stream_url:
-            raise ValueError(f"yt-dlp output:\n{combined}")
+            raise ValueError(f"Invalid API response: {data}")
 
-        _STREAM_CACHE[prepared] = (stream_url, now)
+        # SAVE CACHE
+        _STREAM_CACHE[link] = (stream_url, now)
 
         return {
-            "title": prepared,
+            "title": link,
             "link": stream_url,
             "vidid": None,
             "duration_min": None,
