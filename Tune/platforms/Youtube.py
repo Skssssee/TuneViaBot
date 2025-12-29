@@ -1,188 +1,74 @@
 
-# Authored By Certified Coders © 2025
-# YouTube Platform – FINAL FINAL STABLE
-# API BASED | AUDIO → VIDEO FALLBACK | NO yt-dlp | NO cookies
-
-import time
-import re
-import urllib.parse
 import aiohttp
-from typing import Dict, Optional, Tuple
-
-from pyrogram.enums import MessageEntityType
+import asyncio
+import re
+from typing import Union
 from pyrogram.types import Message
-
-from Tune.utils.errors import capture_internal_err
-
+from pyrogram.enums import MessageEntityType
 
 # =========================
-# API ENDPOINTS
+# CONFIG
 # =========================
+
 AUDIO_API = "http://152.42.187.207:8000/audio"
-VIDEO_API = "http://152.42.187.207:8000/video"
 
-
-# =========================
-# CACHE
-# =========================
-_STREAM_CACHE: Dict[str, Tuple[str, float]] = {}
-_CACHE_TTL = 300  # seconds
-
+YT_REGEX = r"(youtube\.com|youtu\.be)"
 
 # =========================
-# SAFE API CALL
+# CORE
 # =========================
-async def _safe_api_fetch(api: str, link: str) -> dict:
-    encoded = urllib.parse.quote(link, safe="")
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Linux; Android 13)",
-        "Accept": "application/json",
-        "Connection": "keep-alive",
-    }
-
-    timeout = aiohttp.ClientTimeout(total=30)
-
-    async with aiohttp.ClientSession(headers=headers, timeout=timeout) as session:
-        async with session.get(api, params={"url": encoded}) as resp:
-            text = await resp.text()
-
-            if resp.status != 200:
-                # pass full body upward (needed for audio_not_found)
-                raise ValueError(f"API HTTP {resp.status}: {text}")
-
-            try:
-                data = await resp.json()
-            except Exception:
-                raise ValueError(f"Invalid JSON: {text}")
-
-    return data
-
-
-# =========================
-# MAIN CLASS
-# =========================
 class YouTubeAPI:
     def __init__(self):
-        self._url_re = re.compile(r"(youtube\.com|youtu\.be)")
+        self.regex = re.compile(YT_REGEX)
 
-    # ---------------------
-    # CHECK URL
-    # ---------------------
-    async def exists(self, link: str, videoid=None) -> bool:
-        return bool(self._url_re.search(link or ""))
+    # -------------------------
+    # CHECK LINK
+    # -------------------------
+    async def exists(self, link: str) -> bool:
+        return bool(self.regex.search(link))
 
-    # ---------------------
+    # -------------------------
     # EXTRACT URL FROM MESSAGE
-    # ---------------------
-    async def url(self, message: Message) -> Optional[str]:
-        msgs = [message]
+    # -------------------------
+    async def url(self, message: Message) -> Union[str, None]:
+        messages = [message]
         if message.reply_to_message:
-            msgs.append(message.reply_to_message)
+            messages.append(message.reply_to_message)
 
-        for msg in msgs:
-            text = msg.text or msg.caption or ""
-            entities = (msg.entities or []) + (msg.caption_entities or [])
-            for e in entities:
-                if e.type == MessageEntityType.URL:
-                    return text[e.offset : e.offset + e.length]
-                if e.type == MessageEntityType.TEXT_LINK:
-                    return e.url
+        for msg in messages:
+            text = msg.text or msg.caption
+            entities = msg.entities or msg.caption_entities or []
+            for ent in entities:
+                if ent.type in (MessageEntityType.URL, MessageEntityType.TEXT_LINK):
+                    return ent.url if ent.url else text[ent.offset:ent.offset + ent.length]
         return None
 
-    # =====================
-    # AUDIO TRACK (WITH FALLBACK)
-    # =====================
-    @capture_internal_err
-    async def track(self, link: str, videoid=None):
-        now = time.time()
-        cache_key = f"audio:{link}"
+    # -------------------------
+    # GET AUDIO STREAM
+    # -------------------------
+    async def audio(self, link: str):
+        params = {"url": link}
 
-        # CACHE HIT
-        if cache_key in _STREAM_CACHE:
-            url, ts = _STREAM_CACHE[cache_key]
-            if now - ts < _CACHE_TTL:
-                return {
-                    "title": link,
-                    "link": url,
-                    "vidid": None,
-                    "duration_min": None,
-                    "thumb": "",
-                }, None
+        async with aiohttp.ClientSession() as session:
+            async with session.get(AUDIO_API, params=params, timeout=20) as resp:
+                if resp.status != 200:
+                    return 0, f"API HTTP {resp.status}"
 
-        # ---------- TRY AUDIO ----------
-        try:
-            data = await _safe_api_fetch(AUDIO_API, link)
+                data = await resp.json()
 
-            if data.get("status") == "success" and data.get("audio"):
-                stream_url = data["audio"]
-                _STREAM_CACHE[cache_key] = (stream_url, now)
+                if data.get("status") != "success":
+                    return 0, data.get("error", "API failed")
 
-                return {
-                    "title": link,
-                    "link": stream_url,
-                    "vidid": None,
-                    "duration_min": None,
-                    "thumb": "",
-                }, None
+                return 1, data["audio"]
 
-            # explicit audio_not_found
-            if data.get("reason") == "audio_not_found":
-                raise RuntimeError("audio_not_found")
+    # -------------------------
+    # VC STREAM ENTRY
+    # -------------------------
+    async def stream(self, link: str):
+        ok, result = await self.audio(link)
+        if not ok:
+            return 0, result
 
-        except Exception as e:
-            # only fallback if audio missing
-            if "audio_not_found" not in str(e):
-                raise
-
-        # ---------- FALLBACK TO VIDEO ----------
-        data = await _safe_api_fetch(VIDEO_API, link)
-
-        if data.get("status") != "success" or not data.get("video"):
-            raise ValueError("Audio & Video both unavailable")
-
-        stream_url = data["video"]
-        _STREAM_CACHE[cache_key] = (stream_url, now)
-
-        return {
-            "title": link,
-            "link": stream_url,
-            "vidid": None,
-            "duration_min": None,
-            "thumb": "",
-        }, None
-
-    # =====================
-    # VIDEO ONLY
-    # =====================
-    @capture_internal_err
-    async def video(self, link: str, videoid=None):
-        now = time.time()
-        cache_key = f"video:{link}"
-
-        if cache_key in _STREAM_CACHE:
-            url, ts = _STREAM_CACHE[cache_key]
-            if now - ts < _CACHE_TTL:
-                return {
-                    "title": link,
-                    "link": url,
-                    "vidid": None,
-                    "duration_min": None,
-                    "thumb": "",
-                }, None
-
-        data = await _safe_api_fetch(VIDEO_API, link)
-
-        if data.get("status") != "success" or not data.get("video"):
-            raise ValueError("Video unavailable")
-
-        stream_url = data["video"]
-        _STREAM_CACHE[cache_key] = (stream_url, now)
-
-        return {
-            "title": link,
-            "link": stream_url,
-            "vidid": None,
-            "duration_min": None,
-            "thumb": "",
-        }, None
+        # result is DIRECT GOOGLEVIDEO URL
+        return 1, result
